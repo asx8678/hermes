@@ -19,6 +19,8 @@ defmodule Hermes.Application do
       {Hermes.Sessions.Supervisor, name: Hermes.Sessions.Supervisor},
       {Hermes.Gateway.Registry, name: Hermes.Gateway.Registry},
       {Hermes.Gateway.Supervisor, name: Hermes.Gateway.Supervisor},
+      {Hermes.Gateway.Streaming, name: Hermes.Gateway.Streaming},
+      {Hermes.Gateway.Authz, name: Hermes.Gateway.Authz},
       # Start to serve requests, typically the last entry
       HermesWeb.Endpoint
     ]

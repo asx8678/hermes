@@ -36,6 +36,11 @@ config :hermes, :skills,
   prune_builtins: false,
   hub_skills: []
 
+config :hermes, :gateway,
+  allowlist: [],
+  approval_required: [:file_write],
+  streaming_throttle_ms: 500
+
 config :hermes, Oban,
   engine: Oban.Engines.Lite,
   repo: Hermes.Repo,
