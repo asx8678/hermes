@@ -14,8 +14,8 @@ defmodule Hermes.Application do
        repos: Application.fetch_env!(:hermes, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:hermes, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Hermes.PubSub},
-      # Start a worker by calling: Hermes.Worker.start_link(arg)
-      # {Hermes.Worker, arg},
+      {Finch, name: Hermes.Finch},
+      {Hermes.Sessions.Supervisor, name: Hermes.Sessions.Supervisor},
       # Start to serve requests, typically the last entry
       HermesWeb.Endpoint
     ]
