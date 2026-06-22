@@ -33,3 +33,11 @@ unicode-width = "0.1"
 futures-util = "0.3"
 parking_lot = "0.12"
 libc = "0.2"
+# Runtime bootstrapper: download the mise binary and the GitHub release metadata
+# over HTTP natively (no shell scripts). rustls avoids a system OpenSSL dependency.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+flate2 = "1"
+
+# Windows mise archives ship as .zip; unix ships as .tar.gz (handled by tar+flate2).
+[target.'cfg(windows)'.dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }

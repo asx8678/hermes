@@ -1,5 +1,6 @@
 pub mod app;
 pub mod beam;
+pub mod bootstrap;
 pub mod cli;
 pub mod release;
 pub mod sidecar;

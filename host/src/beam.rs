@@ -334,7 +334,7 @@ fn descendant_pids(pid: u32) -> Vec<u32> {
 
 /// Send `signal` to `pid` and all of its descendants.
 #[cfg(unix)]
-fn kill_tree(pid: u32, signal: &str) -> Result<()> {
+pub(crate) fn kill_tree(pid: u32, signal: &str) -> Result<()> {
     for target in descendant_pids(pid) {
         let _ = std::process::Command::new("kill")
             .arg(format!("-{}", signal))
@@ -346,7 +346,7 @@ fn kill_tree(pid: u32, signal: &str) -> Result<()> {
 
 /// Return true if any process in the tree is still alive.
 #[cfg(unix)]
-fn tree_alive(pid: u32) -> bool {
+pub(crate) fn tree_alive(pid: u32) -> bool {
     descendant_pids(pid).into_iter().any(|p| {
         std::process::Command::new("kill")
             .arg("-0")
@@ -358,12 +358,12 @@ fn tree_alive(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn kill_tree(_pid: u32, _signal: &str) -> Result<()> {
+pub(crate) fn kill_tree(_pid: u32, _signal: &str) -> Result<()> {
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn tree_alive(_pid: u32) -> bool {
+pub(crate) fn tree_alive(_pid: u32) -> bool {
     false
 }
 

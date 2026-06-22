@@ -2,6 +2,8 @@ use anyhow::Result;
 use clap::Parser;
 use futures_util::future::Future;
 use hermes_host::beam::BeamProcess;
+use hermes_host::bootstrap::system::{SystemBeam, SystemLaunch};
+use hermes_host::bootstrap::{self, RuntimeReport};
 use hermes_host::cli::{Cli, Command};
 use hermes_host::supervisor::BeamSupervisor;
 use hermes_host::tui;
@@ -9,10 +11,32 @@ use hermes_host::ws_client::ChannelsClient;
 use parking_lot::Mutex;
 use rand::Rng;
 use std::future::pending;
-use std::path::PathBuf;
 use std::sync::Arc;
 
-type SharedSupervisor = Arc<Mutex<Option<BeamSupervisor>>>;
+/// A running BEAM, either launched from a system/mise-managed runtime (from
+/// source) or from the embedded ERTS release.
+enum RunningBeam {
+    Embedded(BeamSupervisor),
+    System(SystemBeam),
+}
+
+impl RunningBeam {
+    fn pid(&self) -> Option<u32> {
+        match self {
+            RunningBeam::Embedded(s) => s.beam().pid(),
+            RunningBeam::System(b) => b.pid(),
+        }
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        match self {
+            RunningBeam::Embedded(s) => s.shutdown().await,
+            RunningBeam::System(b) => b.graceful_shutdown().await,
+        }
+    }
+}
+
+type SharedBeam = Arc<Mutex<Option<RunningBeam>>>;
 
 #[tokio::main]
 async fn main() {
@@ -36,10 +60,14 @@ async fn run() -> Result<()> {
 }
 
 async fn run_chat(model: String, provider: String) -> Result<()> {
-    let cache_dir = BeamProcess::extract().await?;
-    let port = random_port();
+    // Ensure a usable Elixir/Erlang runtime (interactive: may show the setup UI).
+    let report = bootstrap::ensure_runtime(true).await?;
+    print_runtime_notes(&report);
 
-    run_supervised(cache_dir, port, async move {
+    let port = random_port();
+    let beam = start_beam(report, port).await?;
+
+    run_supervised(beam, async move {
         let client = ChannelsClient::connect(port).await?;
         tui::run(client, model, provider).await
     })
@@ -47,32 +75,64 @@ async fn run_chat(model: String, provider: String) -> Result<()> {
 }
 
 async fn run_gateway(port: u16, model: String, provider: String) -> Result<()> {
-    let cache_dir = BeamProcess::extract().await?;
+    // Headless: never pop a TUI; a missing runtime falls back to the release.
+    let report = bootstrap::ensure_runtime(false).await?;
+    print_runtime_notes(&report);
 
     println!("hermes v{}", env!("CARGO_PKG_VERSION"));
     println!("gateway mode on port {}", port);
     println!("model: {}", model);
     println!("provider: {}", provider);
 
+    let beam = start_beam(report, port).await?;
+
     // Signal handling is performed by `run_supervised`; this future simply waits
     // until something else (a signal or an error) terminates the process.
-    run_supervised(cache_dir, port, pending::<Result<()>>()).await
+    run_supervised(beam, pending::<Result<()>>()).await
 }
 
-async fn run_supervised<Fut>(cache_dir: PathBuf, port: u16, fut: Fut) -> Result<()>
+/// Resolve the runtime report into a running BEAM. Prefers a system/mise-managed
+/// launch from source; on any failure, falls back to the embedded release.
+async fn start_beam(report: RuntimeReport, port: u16) -> Result<RunningBeam> {
+    if let Some(launch) = report.launch {
+        match start_system(&launch, port).await {
+            Ok(beam) => return Ok(RunningBeam::System(beam)),
+            Err(e) => {
+                eprintln!("hermes: system runtime launch failed ({e:#}); using bundled release");
+            }
+        }
+    }
+
+    let cache_dir = BeamProcess::extract().await?;
+    let supervisor = BeamSupervisor::start(&cache_dir, port).await?;
+    Ok(RunningBeam::Embedded(supervisor))
+}
+
+async fn start_system(launch: &SystemLaunch, port: u16) -> Result<SystemBeam> {
+    let beam = SystemBeam::spawn(launch, port).await?;
+    beam.wait_for_port().await?;
+    Ok(beam)
+}
+
+fn print_runtime_notes(report: &RuntimeReport) {
+    for note in &report.notes {
+        eprintln!("hermes: {note}");
+    }
+}
+
+async fn run_supervised<Fut>(beam: RunningBeam, fut: Fut) -> Result<()>
 where
     Fut: Future<Output = Result<()>>,
 {
-    let supervisor = BeamSupervisor::start(&cache_dir, port).await?;
-    let shared: SharedSupervisor = Arc::new(Mutex::new(Some(supervisor)));
+    let shared: SharedBeam = Arc::new(Mutex::new(Some(beam)));
 
     // Synchronous last-resort cleanup if a panic escapes an async task.
     let default_hook = std::panic::take_hook();
     let panic_guard = shared.clone();
     std::panic::set_hook(Box::new(move |info| {
         eprintln!("panic: {}", info);
-        if let Some(sup) = panic_guard.lock().as_ref() {
-            if let Some(pid) = sup.beam().pid() {
+        if let Some(beam) = panic_guard.lock().as_ref() {
+            if let Some(pid) = beam.pid() {
                 let _ = std::process::Command::new("kill")
                     .arg("-KILL")
                     .arg(pid.to_string())
@@ -123,9 +183,9 @@ where
     }
 }
 
-async fn graceful_shutdown(shared: SharedSupervisor) -> Result<()> {
-    if let Some(mut sup) = shared.lock().take() {
-        sup.shutdown().await?;
+async fn graceful_shutdown(shared: SharedBeam) -> Result<()> {
+    if let Some(mut beam) = shared.lock().take() {
+        beam.shutdown().await?;
     }
     Ok(())
 }
