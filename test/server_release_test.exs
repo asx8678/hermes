@@ -48,7 +48,7 @@ defmodule Hermes.ServerReleaseTest do
     assert wait_for_port("127.0.0.1", ctx.port, @boot_timeout),
            "server did not accept connections on port #{ctx.port}"
 
-    assert File.exists?(ctx.db_path),
+    assert wait_for_db(ctx.db_path, @boot_timeout),
            "database was not created at #{ctx.db_path}"
 
     status = http_status("http://127.0.0.1:#{ctx.port}/")
@@ -114,6 +114,23 @@ defmodule Hermes.ServerReleaseTest do
         else
           false
         end
+    end
+  end
+  defp wait_for_db(db_path, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    do_wait_for_db(db_path, deadline)
+  end
+
+  defp do_wait_for_db(db_path, deadline) do
+    if File.exists?(db_path) do
+      true
+    else
+      if System.monotonic_time(:millisecond) < deadline do
+        Process.sleep(100)
+        do_wait_for_db(db_path, deadline)
+      else
+        false
+      end
     end
   end
 
