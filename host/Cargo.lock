@@ -463,6 +463,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "parking_lot",
  "rand",
  "ratatui",
  "serde",

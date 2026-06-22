@@ -1,7 +1,6 @@
 use hermes_host::beam::BeamProcess;
 use hermes_host::ws_client::ChannelsClient;
 use rand::Rng;
-use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::timeout;
 
@@ -10,8 +9,8 @@ fn random_port() -> u16 {
     rng.gen_range(10000..=60000)
 }
 
-fn temp_cache_root() -> PathBuf {
-    tempfile::tempdir().expect("creating temp dir").into_path()
+fn temp_cache_root() -> tempfile::TempDir {
+    tempfile::tempdir().expect("creating temp dir")
 }
 
 #[tokio::test]

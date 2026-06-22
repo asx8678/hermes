@@ -160,10 +160,26 @@ impl BeamProcess {
     /// Graceful shutdown of the BEAM child process.
     ///
     /// Attempts, in order:
-    /// 1. `bin/hermes stop` RPC shutdown.
-    /// 2. SIGTERM via `kill -TERM <pid>`.
-    /// 3. SIGKILL fallback via `child.kill()`.
-    pub async fn shutdown(&mut self) -> Result<()> {
+    /// 1. `bin/hermes stop` RPC shutdown (10 s wait).
+    /// 2. SIGTERM to the whole process tree (5 s wait).
+    /// 3. SIGKILL fallback to the whole process tree.
+    /// 4. Verification that no orphan processes remain.
+    pub async fn graceful_shutdown(&mut self) -> Result<()> {
+        self.graceful_shutdown_with_timeouts(Duration::from_secs(10), Duration::from_secs(5))
+            .await
+    }
+
+    /// Graceful shutdown with configurable stage timeouts.
+    ///
+    /// `stop_wait` is the maximum time to wait after `bin/hermes stop` for the
+    /// child to exit on its own. `term_wait` is the maximum time to wait after
+    /// SIGTERM before falling back to SIGKILL.
+    #[doc(hidden)]
+    pub async fn graceful_shutdown_with_timeouts(
+        &mut self,
+        stop_wait: Duration,
+        term_wait: Duration,
+    ) -> Result<()> {
         if self.shutdown_done {
             return Ok(());
         }
@@ -173,7 +189,7 @@ impl BeamProcess {
         let bin = release_root.join("bin/hermes");
 
         // 1. Try a graceful RPC stop using the same node/cookie.
-        let _ = timeout(Duration::from_secs(5), async {
+        let _ = timeout(Duration::from_secs(10), async {
             Command::new(&bin)
                 .arg("stop")
                 .current_dir(&release_root)
@@ -185,30 +201,77 @@ impl BeamProcess {
         })
         .await;
 
-        // 2. Wait briefly for the child to exit on its own.
-        match timeout(Duration::from_secs(5), self.child.wait()).await {
-            Ok(Ok(_status)) => return Ok(()),
+        // 2. Wait up to `stop_wait` for the child to exit on its own.
+        match timeout(stop_wait, self.child.wait()).await {
+            Ok(Ok(_status)) => {
+                self.verify_no_orphans();
+                return Ok(());
+            }
             _ => {}
         }
 
-        // 3. SIGTERM.
+        // 3. SIGTERM the whole tree.
         if let Some(pid) = self.child.id() {
-            let _ = Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .status()
-                .await;
+            let _ = kill_tree(pid, "TERM");
         }
 
-        match timeout(Duration::from_secs(3), self.child.wait()).await {
-            Ok(Ok(_status)) => return Ok(()),
+        match timeout(term_wait, self.child.wait()).await {
+            Ok(Ok(_status)) => {
+                self.verify_no_orphans();
+                return Ok(());
+            }
             _ => {}
         }
-        // 4. SIGKILL fallback.
-        let _ = self.child.kill().await;
-        let _ = timeout(Duration::from_secs(3), self.child.wait()).await;
 
+        // 4. SIGKILL fallback.
+        if let Some(pid) = self.child.id() {
+            let _ = kill_tree(pid, "KILL");
+        }
+        let _ = self.child.kill().await;
+        let _ = timeout(Duration::from_secs(5), self.child.wait()).await;
+
+        self.verify_no_orphans();
         Ok(())
+    }
+
+    /// Backward-compatible alias for [`Self::graceful_shutdown`].
+    pub async fn shutdown(&mut self) -> Result<()> {
+        self.graceful_shutdown().await
+    }
+
+    /// Return the OS PID of the BEAM child, if available.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.id()
+    }
+
+    /// Return true if the child process is still running.
+    pub fn is_running(&self) -> bool {
+        self.child
+            .id()
+            .map(|pid| {
+                std::process::Command::new("kill")
+                    .arg("-0")
+                    .arg(pid.to_string())
+                    .output()
+                    .map(|out| out.status.success())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Verify no orphan processes remain and log any stragglers.
+    fn verify_no_orphans(&self) {
+        let Some(pid) = self.child.id() else {
+            return;
+        };
+
+        if tree_alive(pid) {
+            tracing::warn!(
+                pid,
+                "BEAM process tree still alive after shutdown; attempting final SIGKILL sweep"
+            );
+            let _ = kill_tree(pid, "KILL");
+        }
     }
 
     /// Port the BEAM process is listening on.
@@ -220,6 +283,74 @@ impl BeamProcess {
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
     }
+}
+
+/// Collect the immediate child PIDs of `pid` using `pgrep -P`.
+#[cfg(unix)]
+fn child_pids(pid: u32) -> Vec<u32> {
+    let Ok(output) = std::process::Command::new("pgrep")
+        .arg("-P")
+        .arg(pid.to_string())
+        .output()
+    else {
+        return Vec::new();
+    };
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect()
+}
+
+/// Collect `pid` and all descendant PIDs recursively.
+#[cfg(unix)]
+fn descendant_pids(pid: u32) -> Vec<u32> {
+    let mut result = Vec::new();
+    let mut stack = vec![pid];
+
+    while let Some(current) = stack.pop() {
+        result.push(current);
+        for child in child_pids(current) {
+            stack.push(child);
+        }
+    }
+
+    result
+}
+
+/// Send `signal` to `pid` and all of its descendants.
+#[cfg(unix)]
+fn kill_tree(pid: u32, signal: &str) -> Result<()> {
+    for target in descendant_pids(pid) {
+        let _ = std::process::Command::new("kill")
+            .arg(format!("-{}", signal))
+            .arg(target.to_string())
+            .output();
+    }
+    Ok(())
+}
+
+/// Return true if any process in the tree is still alive.
+#[cfg(unix)]
+fn tree_alive(pid: u32) -> bool {
+    descendant_pids(pid).into_iter().any(|p| {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(p.to_string())
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(unix))]
+fn kill_tree(_pid: u32, _signal: &str) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn tree_alive(_pid: u32) -> bool {
+    false
 }
 
 fn default_cache_root() -> PathBuf {
