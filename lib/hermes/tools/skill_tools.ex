@@ -7,6 +7,8 @@ defmodule Hermes.Tools.SkillTools do
   configured by `:hermes, :skills_dir`).
   """
 
+  alias Hermes.Skills.Telemetry
+
   @doc """
   Returns the tool entries for registration.
   """
@@ -93,6 +95,7 @@ defmodule Hermes.Tools.SkillTools do
 
         if File.regular?(target) do
           content = File.read!(target)
+          Telemetry.record_view(name)
 
           %{
             "success" => true,
@@ -151,6 +154,7 @@ defmodule Hermes.Tools.SkillTools do
         File.mkdir_p!(skill_dir)
         skill_md = Path.join(skill_dir, "SKILL.md")
         File.write!(skill_md, content)
+        Telemetry.record_creation(name, :agent)
 
         %{
           "success" => true,
