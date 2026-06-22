@@ -330,7 +330,9 @@ async fn concurrent_requests_are_independent() -> Result<()> {
     let resp2 = timeout(Duration::from_secs(5), sidecar.recv()).await??;
     assert_eq!(resp2.id, id2);
     match resp2.body {
-        Response::ExecuteResult { stdout, exit_code, .. } => {
+        Response::ExecuteResult {
+            stdout, exit_code, ..
+        } => {
             assert_eq!(exit_code, 0);
             assert!(stdout.contains("quick"));
         }
