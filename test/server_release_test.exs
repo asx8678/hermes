@@ -116,6 +116,7 @@ defmodule Hermes.ServerReleaseTest do
         end
     end
   end
+
   defp wait_for_db(db_path, timeout) do
     deadline = System.monotonic_time(:millisecond) + timeout
     do_wait_for_db(db_path, deadline)

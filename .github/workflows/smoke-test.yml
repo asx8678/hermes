@@ -1,0 +1,79 @@
+name: Smoke Test
+
+on:
+  workflow_run:
+    workflows: ["Build Desktop Binaries"]
+    types: [completed]
+
+jobs:
+  smoke:
+    name: ${{ matrix.artifact }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            artifact: hermes-darwin-arm64
+          - os: macos-13
+            artifact: hermes-darwin-x64
+          - os: ubuntu-22.04
+            artifact: hermes-linux-x64
+          - os: ubuntu-22.04-arm
+            artifact: hermes-linux-arm64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+
+      - name: Extract binary
+        run: |
+          set -euo pipefail
+          zstd -d hermes-*.tar.zst
+          tar xf hermes-*.tar
+          chmod +x ./hermes
+          ./hermes version
+
+      - name: Install smoke test dependencies
+        run: pip install websocket-client
+
+      - name: Boot binary and run one turn
+        env:
+          HERMES_PORT: 4000
+        run: |
+          set -euo pipefail
+
+          # Start the gateway in the background using the mock provider.
+          ./hermes \
+            --port "$HERMES_PORT" \
+            --model smoke-test-model \
+            --provider mock \
+            gateway &
+          HERMES_PID=$!
+
+          # Wait briefly so the binary has time to extract the BEAM release.
+          sleep 2
+
+          # Verify the process is still alive before running the WS test.
+          if ! kill -0 "$HERMES_PID" 2>/dev/null; then
+            echo "hermes-host exited before listening" >&2
+            wait "$HERMES_PID" || true
+            exit 1
+          fi
+
+          # The Python script waits for the port, runs one WS turn, and exits
+          # non-zero on failure.
+          python3 host/scripts/smoke.py
+
+          # Request clean shutdown.
+          kill -INT "$HERMES_PID"
+          wait "$HERMES_PID" || true
+          echo "Smoke test passed for ${{ matrix.artifact }}"
