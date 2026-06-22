@@ -1,4 +1,6 @@
-use crate::app::{role_label, role_style, App, AppCommand, AppStatus, ApprovalRequest, Client};
+use crate::app::{
+    role_label, role_style, App, AppCommand, AppStatus, ApprovalRequest, Client, Picker,
+};
 use crate::ws_client::ChannelsClient;
 use anyhow::{anyhow, Result};
 use crossterm::{
@@ -29,11 +31,20 @@ const NEW_SESSION_TOPIC: &str = "session:new";
 /// the bottom, and a status bar.
 pub fn render_app(frame: &mut Frame, app: &App<impl Client>) {
     let area = frame.area();
+    // When a picker is open, give the bottom panel more room for the list.
+    let input_height = match &app.picker {
+        Some(picker) => {
+            // borders (2) + up to ~8 visible items, clamped to the frame.
+            let rows = picker.items.len().clamp(1, 8) as u16 + 2;
+            rows.min(area.height.saturating_sub(2)).max(3)
+        }
+        None => 3,
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(input_height),
             Constraint::Length(1),
         ])
         .split(area);
@@ -106,6 +117,10 @@ fn render_input(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
         render_approval_prompt(frame, area, req);
         return;
     }
+    if let Some(ref picker) = app.picker {
+        render_picker(frame, area, picker);
+        return;
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -146,6 +161,49 @@ fn render_approval_prompt(frame: &mut Frame, area: Rect, req: &ApprovalRequest) 
     ]);
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+}
+
+fn render_picker(frame: &mut Frame, area: Rect, picker: &Picker) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(
+            "{}  (↑/↓ move · Enter select · Esc cancel)",
+            picker.title
+        ))
+        .border_style(Style::default().fg(Color::Cyan));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // The input row is short, so keep only as many rows as fit and scroll so the
+    // selected item stays visible.
+    let visible = (inner.height as usize).max(1);
+    let start = if picker.selected >= visible {
+        picker.selected + 1 - visible
+    } else {
+        0
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for (idx, item) in picker.items.iter().enumerate().skip(start).take(visible) {
+        if idx == picker.selected {
+            lines.push(Line::from(vec![
+                Span::styled("> ", Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    item.label.clone(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(item.label.clone(), Style::default().fg(Color::Gray)),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
 fn render_status(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
@@ -276,6 +334,56 @@ async fn run_loop(
                                     .await?;
                             }
                             AppCommand::SendSessionConfig { model } => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "session:config", json!({"model": model}))
+                                    .await?;
+                            }
+                            AppCommand::SendProviderList => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "providers:list", json!({}))
+                                    .await?;
+                            }
+                            AppCommand::SendProviderAdd { name, base_url, api_key } => {
+                                let mut payload = json!({
+                                    "name": name,
+                                    "kind": "openai",
+                                    "base_url": base_url,
+                                });
+                                if let Some(key) = api_key {
+                                    payload["api_key"] = json!(key);
+                                }
+                                app.ws_client
+                                    .send(&app.channel_topic, "providers:add", payload)
+                                    .await?;
+                            }
+                            AppCommand::SendProviderRemove { name } => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "providers:remove", json!({"name": name}))
+                                    .await?;
+                            }
+                            AppCommand::SendModelList { provider } => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "models:list", json!({"provider": provider}))
+                                    .await?;
+                            }
+                            AppCommand::SendModelAdd { provider, model_id, context_window } => {
+                                let mut payload = json!({
+                                    "provider_name": provider,
+                                    "model_id": model_id,
+                                });
+                                if let Some(ctx) = context_window {
+                                    payload["context_window"] = json!(ctx);
+                                }
+                                app.ws_client
+                                    .send(&app.channel_topic, "models:add", payload)
+                                    .await?;
+                            }
+                            AppCommand::SetProvider { provider } => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "session:config", json!({"provider": provider}))
+                                    .await?;
+                            }
+                            AppCommand::SetModel { model } => {
                                 app.ws_client
                                     .send(&app.channel_topic, "session:config", json!({"model": model}))
                                     .await?;

@@ -111,4 +111,28 @@ defmodule HermesWeb.SessionChannelManagerTest do
       assert is_list(sessions)
     end
   end
+
+  describe "human-in-the-loop" do
+    test "approval:respond acknowledges a decision", %{socket: socket} do
+      ref = push(socket, "approval:respond", %{"approval_id" => "abc", "approved" => true})
+      assert_reply ref, :ok, %{}
+    end
+
+    test "approval:respond rejects a malformed payload", %{socket: socket} do
+      ref = push(socket, "approval:respond", %{"approved" => true})
+      assert_reply ref, :error, %{reason: _}
+    end
+
+    test "slash:exec compact reports compaction", %{socket: socket} do
+      ref = push(socket, "slash:exec", %{"command" => "compact"})
+      assert_reply ref, :ok, %{output: output}
+      assert output =~ "Compacted context"
+    end
+
+    test "slash:exec rejects an unknown command", %{socket: socket} do
+      ref = push(socket, "slash:exec", %{"command" => "frobnicate"})
+      assert_reply ref, :error, %{reason: reason}
+      assert reason =~ "unknown"
+    end
+  end
 end

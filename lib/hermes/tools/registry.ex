@@ -95,7 +95,8 @@ defmodule Hermes.Tools.Registry do
       Hermes.Tools.SkillTools,
       Hermes.Tools.MemoryTool,
       Hermes.Tools.DelegateTool,
-      Hermes.Tools.TodoTool
+      Hermes.Tools.TodoTool,
+      Hermes.Tools.ClarifyTool
     ]
 
     for mod <- builtin_modules do

@@ -154,12 +154,27 @@ defmodule HermesWeb.SessionChannel do
     {:reply, {:ok, %{}}, socket}
   end
 
+  # --- Human-in-the-loop (approval / slash commands) ------------------------
+
+  def handle_in("approval:respond", %{"approval_id" => id, "approved" => approved}, socket)
+      when is_binary(id) and is_boolean(approved) do
+    Hermes.Approvals.respond(id, approved)
+    {:reply, {:ok, %{}}, socket}
+  end
+
   def handle_in("approval:respond", _payload, socket) do
-    {:reply, {:error, %{reason: "not implemented"}}, socket}
+    {:reply, {:error, %{reason: "missing approval_id/approved"}}, socket}
+  end
+
+  def handle_in("slash:exec", %{"command" => command} = params, socket) do
+    case slash_exec(command, params, socket.assigns[:session_id]) do
+      {:ok, output} -> {:reply, {:ok, %{output: output}}, socket}
+      {:error, reason} -> {:reply, {:error, %{reason: reason}}, socket}
+    end
   end
 
   def handle_in("slash:exec", _payload, socket) do
-    {:reply, {:error, %{reason: "not implemented"}}, socket}
+    {:reply, {:error, %{reason: "missing command"}}, socket}
   end
 
   # ----------------------------------------------------------------------------
@@ -202,6 +217,16 @@ defmodule HermesWeb.SessionChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:approval_request, payload}, socket) do
+    push(socket, "approval:request", payload)
+    {:noreply, socket}
+  end
+
+  def handle_info({:clarify_request, payload}, socket) do
+    push(socket, "clarify:request", payload)
+    {:noreply, socket}
+  end
+
   def handle_info(_msg, socket) do
     {:noreply, socket}
   end
@@ -212,6 +237,22 @@ defmodule HermesWeb.SessionChannel do
 
   defp topic(socket) do
     socket.topic
+  end
+
+  # Server-side slash commands (the TUI handles /help, /clear, /status, /model,
+  # /sessions locally; this covers commands that need server state).
+  defp slash_exec("compact", _params, session_id) when is_binary(session_id) do
+    case SessionServer.compact(session_id) do
+      {:ok, %{before: before, after: aft}} ->
+        {:ok, "Compacted context: #{before} → #{aft} messages."}
+
+      {:error, _} ->
+        {:error, "session not found"}
+    end
+  end
+
+  defp slash_exec(command, _params, _session_id) do
+    {:error, "unknown or unavailable command: #{command}"}
   end
 
   defp push_providers(socket) do

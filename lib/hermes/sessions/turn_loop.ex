@@ -7,22 +7,26 @@ defmodule Hermes.Sessions.TurnLoop do
   provider, dispatches any returned tool calls, and returns the final
   assistant text response along with the updated message history.
 
-  ## Simplifications for Milestone A
+  ## Implemented
+
+  - Iteration budget consume / refund / grace-call logic.
+  - Tool-name validation and JSON-argument validation.
+  - Tool execution through `Hermes.Tools.Dispatcher`.
+  - Context compression via `Hermes.Sessions.Compaction` (token-window driven).
+  - Live streaming: providers broadcast `{:stream_delta, text}` when `:stream_to`
+    is set.
+  - Human-in-the-loop: tool approval (`Hermes.Approvals`) and `clarify` (pauses
+    the turn for the user's next message).
+  - Outer-loop error handling that fills missing tool results and breaks
+    near `max_iterations`.
+
+  ## Still simplified
 
   - Prompt caching (`apply_anthropic_cache_control`) is skipped — later milestone.
-  - Context compression (`should_compress`) is skipped — later milestone.
-  - `/steer` drain and gateway hooks are skipped — no gateway yet.
   - Codex ack continuation loops are skipped — Anthropic-only mode.
   - Thinking-only prefill recovery, empty-response retries and fallback
     providers are skipped — later milestone.
   - Plugin pre/post LLM hooks and middleware are skipped — not ported.
-
-  Kept from the Python source:
-  - Iteration budget consume / refund / grace-call logic.
-  - Tool-name validation and JSON-argument validation.
-  - Tool execution through `Hermes.Tools.Dispatcher`.
-  - Outer-loop error handling that fills missing tool results and breaks
-    near `max_iterations`.
   """
 
   alias Hermes.Providers.Types.NormalizedResponse
@@ -330,22 +334,11 @@ defmodule Hermes.Sessions.TurnLoop do
             _ -> %{}
           end
 
-        result =
-          try do
-            Hermes.Tools.Dispatcher.invoke(name, decoded_args, context)
-          rescue
-            error ->
-              "Error executing tool: #{Exception.message(error)}"
-          catch
-            kind, reason ->
-              "Error executing tool: #{kind}: #{inspect(reason)}"
-          end
-
         %{
           role: "tool",
           name: name,
           tool_call_id: id,
-          content: result
+          content: execute_one_tool(state, name, decoded_args, context)
         }
       end)
 
@@ -362,7 +355,54 @@ defmodule Hermes.Sessions.TurnLoop do
         state
       end
 
-    loop(state)
+    # `clarify` pauses the turn: the agent posed a question to the user and the
+    # turn ends so the user's next message becomes the answer.
+    if MapSet.member?(called_names, "clarify") do
+      finalize(%{state | final_response: clarify_question(tool_calls), exit_reason: "clarify"})
+    else
+      loop(state)
+    end
+  end
+
+  # Run a single tool, gating it behind human approval when required. A denied
+  # tool returns a structured error instead of executing.
+  defp execute_one_tool(state, name, decoded_args, context) do
+    if Hermes.Approvals.required?(name) do
+      case Hermes.Approvals.request(state.session_id, name, decoded_args) do
+        :approved ->
+          invoke_tool(name, decoded_args, context)
+
+        :denied ->
+          Jason.encode!(%{
+            "error" => "Tool '#{name}' was denied by the user.",
+            "denied" => true
+          })
+      end
+    else
+      invoke_tool(name, decoded_args, context)
+    end
+  end
+
+  defp invoke_tool(name, decoded_args, context) do
+    Hermes.Tools.Dispatcher.invoke(name, decoded_args, context)
+  rescue
+    error -> "Error executing tool: #{Exception.message(error)}"
+  catch
+    kind, reason -> "Error executing tool: #{kind}: #{inspect(reason)}"
+  end
+
+  defp clarify_question(tool_calls) do
+    Enum.find_value(tool_calls, "Could you clarify your request?", fn %ToolCall{
+                                                                        name: name,
+                                                                        arguments: args
+                                                                      } ->
+      with "clarify" <- name,
+           {:ok, %{"question" => q}} when is_binary(q) <- Jason.decode(args) do
+        q
+      else
+        _ -> false
+      end
+    end)
   end
 
   # ---------------------------------------------------------------------------

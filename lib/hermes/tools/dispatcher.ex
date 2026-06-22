@@ -67,8 +67,8 @@ defmodule Hermes.Tools.Dispatcher do
   defp dispatch("memory", args, context),
     do: Hermes.Tools.MemoryTool.invoke(args, context)
 
-  defp dispatch("clarify", _args, _context),
-    do: %{"error" => "no human-in-loop available (headless mode)"}
+  defp dispatch("clarify", args, context),
+    do: run_clarify(args, context)
 
   defp dispatch("delegate_task", args, context),
     do: Hermes.Tools.DelegateTool.invoke(args, context)
@@ -109,6 +109,27 @@ defmodule Hermes.Tools.Dispatcher do
   # ---------------------------------------------------------------------------
   # Built-in dispatch helpers
   # ---------------------------------------------------------------------------
+
+  defp run_clarify(args, context) do
+    question = args["question"] || args["prompt"] || "Could you clarify your request?"
+    choices = args["choices"] || args["options"] || []
+
+    if session_id = context[:session_id] do
+      Phoenix.PubSub.broadcast(
+        Hermes.PubSub,
+        "session:#{session_id}",
+        {:clarify_request, %{question: question, choices: choices}}
+      )
+    end
+
+    %{
+      "status" => "asked",
+      "question" => question,
+      "note" =>
+        "The question has been posed to the user. The turn will pause; the user's " <>
+          "next message is their answer."
+    }
+  end
 
   defp run_session_search(args, context) do
     opts = session_search_opts(args, context)

@@ -85,6 +85,18 @@ defmodule Hermes.Sessions.SessionServer do
   end
 
   @doc """
+  Forces a context-compaction pass on the session now (the `/compact` command).
+  Returns `{:ok, %{before, after}}` message counts.
+  """
+  @spec compact(String.t()) :: {:ok, map()} | {:error, :not_found}
+  def compact(session_id) when is_binary(session_id) do
+    case whereis(session_id) do
+      nil -> {:error, :not_found}
+      pid -> GenServer.call(pid, :compact)
+    end
+  end
+
+  @doc """
   Triggers a non-blocking turn for `session_id` using `message` as the user
   prompt.
 
@@ -171,6 +183,27 @@ defmodule Hermes.Sessions.SessionServer do
     )
 
     {:reply, {:ok, %{model: model, provider: provider}}, new_state}
+  end
+
+  def handle_call(:compact, _from, state) do
+    before = length(state.messages)
+    resolved = resolve_provider(state)
+
+    comp_state = %{
+      session_id: state.session_id,
+      provider: resolved.module,
+      model: state.model,
+      base_url: resolved.base_url,
+      api_key: resolved.api_key,
+      finch_name: Hermes.Finch,
+      context_window: Catalog.context_window(state.provider, state.model),
+      messages: state.messages
+    }
+
+    new_messages = Hermes.Sessions.Compaction.force(comp_state).messages
+
+    {:reply, {:ok, %{before: before, after: length(new_messages)}},
+     %{state | messages: new_messages}}
   end
 
   @impl true

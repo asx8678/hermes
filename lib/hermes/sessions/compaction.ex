@@ -61,6 +61,15 @@ defmodule Hermes.Sessions.Compaction do
 
   def maybe_compress(state), do: state
 
+  @doc """
+  Forces a compaction pass regardless of the token threshold (used by the
+  `/compact` slash command). Returns the state with compressed messages.
+  """
+  @spec force(map()) :: map()
+  def force(%{messages: messages} = state) do
+    compress(state, estimate_tokens(messages))
+  end
+
   # ---------------------------------------------------------------------------
 
   defp compress(%{session_id: session_id} = state, tokens) do

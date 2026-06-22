@@ -87,6 +87,52 @@ pub struct ClarifyRequest {
     pub choices: Vec<String>,
 }
 
+/// Which kind of selection an open [`Picker`] is making.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PickerKind {
+    Provider,
+    Model,
+}
+
+/// A single selectable row in a [`Picker`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct PickerItem {
+    /// Human-readable label shown in the list.
+    pub label: String,
+    /// The value submitted when the item is confirmed (model id / provider name).
+    pub value: String,
+}
+
+/// An interactive selection overlay shown in place of the input box.
+///
+/// Modeled on the `pending_approval` flow: while a picker is open, key presses
+/// are routed to picker navigation and normal input is blocked.
+#[derive(Debug, Clone)]
+pub struct Picker {
+    pub title: String,
+    pub items: Vec<PickerItem>,
+    pub selected: usize,
+    pub kind: PickerKind,
+}
+
+impl Picker {
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if self.selected + 1 < self.items.len() {
+            self.selected += 1;
+        }
+    }
+
+    fn selected_item(&self) -> Option<&PickerItem> {
+        self.items.get(self.selected)
+    }
+}
+
 /// High-level command produced by a key press.  The TUI loop translates these
 /// into outbound Phoenix Channel events.
 #[derive(Debug, PartialEq)]
@@ -103,6 +149,28 @@ pub enum AppCommand {
     SendSessionList,
     /// Reconfigure the current session with a new model.
     SendSessionConfig { model: String },
+    /// Request the list of configured providers (opens a picker on reply).
+    SendProviderList,
+    /// Add a new provider.
+    SendProviderAdd {
+        name: String,
+        base_url: String,
+        api_key: Option<String>,
+    },
+    /// Remove a provider by name.
+    SendProviderRemove { name: String },
+    /// Request the list of models for a provider (opens a picker on reply).
+    SendModelList { provider: String },
+    /// Add a model to a provider's catalog.
+    SendModelAdd {
+        provider: String,
+        model_id: String,
+        context_window: Option<u64>,
+    },
+    /// Switch the current session to a provider (confirmed via picker).
+    SetProvider { provider: String },
+    /// Switch the current session to a model (confirmed via picker).
+    SetModel { model: String },
 }
 
 /// TUI state machine.
@@ -128,6 +196,8 @@ pub struct App<T: Client> {
     pub pending_approval: Option<ApprovalRequest>,
     /// Pending clarification request, if any.
     pub pending_clarify: Option<ClarifyRequest>,
+    /// Active selection overlay, if any. Blocks normal input.
+    pub picker: Option<Picker>,
 }
 
 impl<T: Client> App<T> {
@@ -146,6 +216,7 @@ impl<T: Client> App<T> {
             provider: provider.into(),
             pending_approval: None,
             pending_clarify: None,
+            picker: None,
         }
     }
 
@@ -177,6 +248,10 @@ impl<T: Client> App<T> {
             "approval:request" => self.handle_approval_request(msg),
             "clarify:request" => self.handle_clarify_request(msg),
             "session:status" => self.handle_session_status(msg),
+            "providers:listed" => self.handle_providers_listed(msg),
+            "models:listed" => self.handle_models_listed(msg),
+            "sessions:listed" => self.handle_sessions_listed(msg),
+            "session:config" => self.handle_session_config(msg),
             _ => {}
         }
     }
@@ -320,6 +395,147 @@ impl<T: Client> App<T> {
         }
     }
 
+    fn handle_providers_listed(&mut self, msg: &Message) {
+        let providers = match msg.payload.get("providers").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return,
+        };
+        let items: Vec<PickerItem> = providers
+            .iter()
+            .filter_map(|p| {
+                let name = p.get("name").and_then(|v| v.as_str())?;
+                let label = p
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(name)
+                    .to_string();
+                let mut display = label;
+                if p.get("is_default").and_then(|v| v.as_bool()) == Some(true) {
+                    display.push_str(" (default)");
+                }
+                Some(PickerItem {
+                    label: display,
+                    value: name.to_string(),
+                })
+            })
+            .collect();
+
+        if items.is_empty() {
+            self.add_system_message("No providers configured.");
+            return;
+        }
+
+        let selected = items
+            .iter()
+            .position(|i| i.value == self.provider)
+            .unwrap_or(0);
+        self.picker = Some(Picker {
+            title: "Select provider".to_string(),
+            items,
+            selected,
+            kind: PickerKind::Provider,
+        });
+    }
+
+    fn handle_models_listed(&mut self, msg: &Message) {
+        let models = match msg.payload.get("models").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return,
+        };
+        let provider = msg
+            .payload
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let items: Vec<PickerItem> = models
+            .iter()
+            .filter_map(|m| {
+                let model_id = m.get("model_id").and_then(|v| v.as_str())?;
+                let label = m
+                    .get("label")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(model_id)
+                    .to_string();
+                let mut display = label;
+                if let Some(ctx) = m.get("context_window").and_then(|v| v.as_u64()) {
+                    display.push_str(&format!(" [{}]", ctx));
+                }
+                if m.get("is_default").and_then(|v| v.as_bool()) == Some(true) {
+                    display.push_str(" (default)");
+                }
+                Some(PickerItem {
+                    label: display,
+                    value: model_id.to_string(),
+                })
+            })
+            .collect();
+
+        if items.is_empty() {
+            self.add_system_message(&format!("No models available for provider {}.", provider));
+            return;
+        }
+
+        let selected = items
+            .iter()
+            .position(|i| i.value == self.model)
+            .unwrap_or(0);
+        let title = if provider.is_empty() {
+            "Select model".to_string()
+        } else {
+            format!("Select model ({})", provider)
+        };
+        self.picker = Some(Picker {
+            title,
+            items,
+            selected,
+            kind: PickerKind::Model,
+        });
+    }
+
+    fn handle_sessions_listed(&mut self, msg: &Message) {
+        let sessions = match msg.payload.get("sessions").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return,
+        };
+        if sessions.is_empty() {
+            self.add_system_message("No active sessions.");
+            return;
+        }
+        let mut lines = String::from("Active sessions:");
+        for s in sessions {
+            let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let model = s.get("model").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = s.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+            let count = s
+                .get("message_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            lines.push_str(&format!(
+                "\n  {} | {} | {} | {} msgs",
+                id, model, status, count
+            ));
+        }
+        self.add_system_message(&lines);
+    }
+
+    fn handle_session_config(&mut self, msg: &Message) {
+        let mut changed = false;
+        if let Some(model) = msg.payload.get("model").and_then(|v| v.as_str()) {
+            self.model = model.to_string();
+            changed = true;
+        }
+        if let Some(provider) = msg.payload.get("provider").and_then(|v| v.as_str()) {
+            self.provider = provider.to_string();
+            changed = true;
+        }
+        if changed {
+            self.add_system_message(&format!(
+                "Session updated: model {} | provider {}",
+                self.model, self.provider
+            ));
+        }
+    }
+
     fn handle_approval_request(&mut self, msg: &Message) {
         let approval_id = msg
             .payload
@@ -418,6 +634,18 @@ impl<T: Client> App<T> {
             return AppCommand::None;
         }
 
+        // Ctrl-C always exits, even with an overlay open.
+        if let KeyCode::Char('c') = key.code {
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                return AppCommand::Exit;
+            }
+        }
+
+        // While a picker is open, route navigation keys to it and block input.
+        if self.picker.is_some() {
+            return self.handle_picker_key(key);
+        }
+
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => AppCommand::Exit,
             KeyCode::Esc => {
@@ -491,6 +719,50 @@ impl<T: Client> App<T> {
         }
     }
 
+    /// Handle a key press while a [`Picker`] overlay is open.
+    fn handle_picker_key(&mut self, key: KeyEvent) -> AppCommand {
+        match key.code {
+            KeyCode::Up => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.move_up();
+                }
+                AppCommand::None
+            }
+            KeyCode::Down => {
+                if let Some(picker) = self.picker.as_mut() {
+                    picker.move_down();
+                }
+                AppCommand::None
+            }
+            KeyCode::Esc => {
+                self.picker = None;
+                AppCommand::None
+            }
+            KeyCode::Enter => {
+                let Some(picker) = self.picker.take() else {
+                    return AppCommand::None;
+                };
+                match picker.selected_item() {
+                    Some(item) => {
+                        let value = item.value.clone();
+                        match picker.kind {
+                            PickerKind::Provider => {
+                                self.provider = value.clone();
+                                AppCommand::SetProvider { provider: value }
+                            }
+                            PickerKind::Model => {
+                                self.model = value.clone();
+                                AppCommand::SetModel { model: value }
+                            }
+                        }
+                    }
+                    None => AppCommand::None,
+                }
+            }
+            _ => AppCommand::None,
+        }
+    }
+
     fn dispatch_slash_command(&mut self, command: &str) -> AppCommand {
         let parts: Vec<&str> = command.split_whitespace().collect();
         if parts.is_empty() {
@@ -511,18 +783,80 @@ impl<T: Client> App<T> {
                 AppCommand::None
             }
             "/sessions" => AppCommand::SendSessionList,
-            "/model" => {
-                if parts.len() < 2 {
-                    self.add_system_message("Usage: /model <name>");
-                    return AppCommand::None;
-                }
-                let model = parts[1].to_string();
-                self.model = model.clone();
-                AppCommand::SendSessionConfig { model }
-            }
+            "/providers" => self.dispatch_providers_command(&parts),
+            "/model" => self.dispatch_model_command(&parts),
             _ => {
                 self.add_system_message(&format!("Unknown command: {}", command));
                 AppCommand::None
+            }
+        }
+    }
+
+    /// Handle the `/providers` family of subcommands.
+    fn dispatch_providers_command(&mut self, parts: &[&str]) -> AppCommand {
+        match parts.get(1).copied() {
+            None => AppCommand::SendProviderList,
+            Some("add") => {
+                // /providers add <name> <base_url> [api_key]
+                if parts.len() < 4 {
+                    self.add_system_message("Usage: /providers add <name> <base_url> [api_key]");
+                    return AppCommand::None;
+                }
+                AppCommand::SendProviderAdd {
+                    name: parts[2].to_string(),
+                    base_url: parts[3].to_string(),
+                    api_key: parts.get(4).map(|s| s.to_string()),
+                }
+            }
+            Some("remove") => {
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: /providers remove <name>");
+                    return AppCommand::None;
+                }
+                AppCommand::SendProviderRemove {
+                    name: parts[2].to_string(),
+                }
+            }
+            Some(other) => {
+                self.add_system_message(&format!("Unknown /providers subcommand: {}", other));
+                AppCommand::None
+            }
+        }
+    }
+
+    /// Handle the `/model` family of subcommands.
+    fn dispatch_model_command(&mut self, parts: &[&str]) -> AppCommand {
+        match parts.get(1).copied() {
+            // /model (no arg) -> open a model picker for the current provider.
+            None => AppCommand::SendModelList {
+                provider: self.provider.clone(),
+            },
+            Some("list") => {
+                // /model list [provider]
+                let provider = parts
+                    .get(2)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| self.provider.clone());
+                AppCommand::SendModelList { provider }
+            }
+            Some("add") => {
+                // /model add <id> [context_window]
+                if parts.len() < 3 {
+                    self.add_system_message("Usage: /model add <id> [context_window]");
+                    return AppCommand::None;
+                }
+                let context_window = parts.get(3).and_then(|s| s.parse::<u64>().ok());
+                AppCommand::SendModelAdd {
+                    provider: self.provider.clone(),
+                    model_id: parts[2].to_string(),
+                    context_window,
+                }
+            }
+            // /model <id> -> switch the live session to that model.
+            Some(model_id) => {
+                let model = model_id.to_string();
+                self.model = model.clone();
+                AppCommand::SendSessionConfig { model }
             }
         }
     }
@@ -533,8 +867,14 @@ impl<T: Client> App<T> {
              /help     - show this help\n\
              /sessions - list active sessions\n\
              /clear    - clear message history\n\
-             /model <name> - switch model\n\
-             /status   - show session status",
+             /status   - show session status\n\
+             /model               - pick a model (interactive)\n\
+             /model <id>          - switch model\n\
+             /model list [provider] - list models\n\
+             /model add <id> [ctx]  - add a model to the catalog\n\
+             /providers           - pick a provider (interactive)\n\
+             /providers add <name> <base_url> [api_key] - add a provider\n\
+             /providers remove <name>                    - remove a provider",
         );
     }
 
@@ -550,7 +890,7 @@ impl<T: Client> App<T> {
     }
 
     fn is_input_blocked(&self) -> bool {
-        self.status == AppStatus::WaitingForApproval
+        self.status == AppStatus::WaitingForApproval || self.picker.is_some()
     }
 
     fn cycle_history(&mut self, delta: i8) {
@@ -799,6 +1139,149 @@ mod tests {
         assert_eq!(app.status, AppStatus::Connected);
         assert_eq!(app.messages[0].role, "system");
         assert_eq!(app.messages[0].content, "session busy");
+    }
+
+    #[tokio::test]
+    async fn slash_providers_opens_list_and_model_picker() {
+        let mut app = app();
+        app.status = AppStatus::Connected;
+
+        app.input = "/providers".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(cmd, AppCommand::SendProviderList);
+
+        app.input = "/model".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(
+            cmd,
+            AppCommand::SendModelList {
+                provider: "anthropic".to_string()
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn slash_providers_add_and_remove() {
+        let mut app = app();
+        app.input = "/providers add local http://localhost:11434 secret".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(
+            cmd,
+            AppCommand::SendProviderAdd {
+                name: "local".to_string(),
+                base_url: "http://localhost:11434".to_string(),
+                api_key: Some("secret".to_string()),
+            }
+        );
+
+        app.input = "/providers remove local".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(
+            cmd,
+            AppCommand::SendProviderRemove {
+                name: "local".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn providers_listed_populates_picker() {
+        let mut app = app();
+        app.handle_ws_message(&Message {
+            topic: "session:new".to_string(),
+            event: "providers:listed".to_string(),
+            join_ref: None,
+            reference: None,
+            payload: json!({
+                "providers": [
+                    {"name": "anthropic", "label": "Anthropic", "is_default": true},
+                    {"name": "local", "label": "Local"}
+                ]
+            }),
+        });
+        let picker = app.picker.as_ref().expect("picker should be set");
+        assert_eq!(picker.kind, PickerKind::Provider);
+        assert_eq!(picker.items.len(), 2);
+        // The current provider ("anthropic") should be pre-selected.
+        assert_eq!(picker.selected, 0);
+        assert_eq!(picker.items[0].value, "anthropic");
+    }
+
+    #[test]
+    fn picker_navigation_and_confirm_sets_provider() {
+        let mut app = app();
+        app.handle_ws_message(&Message {
+            topic: "session:new".to_string(),
+            event: "providers:listed".to_string(),
+            join_ref: None,
+            reference: None,
+            payload: json!({
+                "providers": [
+                    {"name": "anthropic", "label": "Anthropic"},
+                    {"name": "local", "label": "Local"}
+                ]
+            }),
+        });
+        // Move down to the second item, then confirm.
+        app.handle_key_event(KeyEvent::from(KeyCode::Down));
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(
+            cmd,
+            AppCommand::SetProvider {
+                provider: "local".to_string()
+            }
+        );
+        assert_eq!(app.provider, "local");
+        assert!(app.picker.is_none(), "picker should close on confirm");
+    }
+
+    #[test]
+    fn picker_esc_cancels_without_command() {
+        let mut app = app();
+        app.handle_ws_message(&Message {
+            topic: "session:new".to_string(),
+            event: "models:listed".to_string(),
+            join_ref: None,
+            reference: None,
+            payload: json!({
+                "provider": "anthropic",
+                "models": [{"model_id": "claude-opus-4", "label": "Opus"}]
+            }),
+        });
+        assert!(app.picker.is_some());
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(cmd, AppCommand::None);
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn session_config_inbound_updates_status_bar() {
+        let mut app = app();
+        app.handle_ws_message(&Message {
+            topic: "session:new".to_string(),
+            event: "session:config".to_string(),
+            join_ref: None,
+            reference: None,
+            payload: json!({"model": "gpt-5", "provider": "local"}),
+        });
+        assert_eq!(app.model, "gpt-5");
+        assert_eq!(app.provider, "local");
+    }
+
+    #[test]
+    fn picker_blocks_normal_typing() {
+        let mut app = app();
+        app.picker = Some(Picker {
+            title: "Select provider".to_string(),
+            items: vec![PickerItem {
+                label: "Anthropic".to_string(),
+                value: "anthropic".to_string(),
+            }],
+            selected: 0,
+            kind: PickerKind::Provider,
+        });
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+        assert!(app.input.is_empty(), "typing must be blocked while picker open");
     }
 
     #[test]
