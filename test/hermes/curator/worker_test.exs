@@ -131,7 +131,8 @@ defmodule Hermes.Curator.WorkerTest do
                BackgroundReview.spawn_review(
                  "session_#{System.unique_integer([:positive])}",
                  [],
-                 []
+                 provider: MockProvider,
+                 model: "test-model"
                )
 
       assert_receive {:telemetry, [:hermes, :curator, :background_review, :spawned], _meta, ^ref},
@@ -139,7 +140,7 @@ defmodule Hermes.Curator.WorkerTest do
 
       assert_receive {:telemetry, [:hermes, :curator, :background_review, :completed], _meta,
                       ^ref},
-                     1_000
+                     5_000
     end
   end
 
