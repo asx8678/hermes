@@ -63,23 +63,23 @@ rewrite is a *focused Phase-1 port* of the irreducible core, not a line-for-line
 
 | Component | Language | Files | Lines |
 |---|---|---|---|
-| `lib/hermes/gateway` — connector tree (7 platforms) | Elixir | 11 | 3,010 |
-| `lib/hermes/tools` — registry, dispatcher, tools, sidecar clients | Elixir | 12 | 2,467 |
-| `lib/hermes/sessions` — SessionServer, TurnLoop, Search, schemas | Elixir | 11 | 2,190 |
-| `lib/hermes/providers` — transport behaviour + anthropic/openai/mock | Elixir | 5 | 911 |
-| `lib/hermes/skills` — manager / provenance / telemetry | Elixir | 4 | 607 |
-| `lib/hermes/curator` — Oban worker + background review | Elixir | 2 | 160 |
-| `lib/hermes_web` — Phoenix channels + LiveView dashboard | Elixir | 10 | 420 |
-| `lib/hermes` — application, supervision, native loader, repo | Elixir | 11 | 627 |
-| `host/src` — CLI, ratatui TUI, BEAM supervisor, **sidecars** | Rust | 14 | 3,076 |
-| `host/native/src` — **the Rustler NIF** (token counting) | Rust | 1 | 46 |
-| **Production total** | | **81** | **13,514** |
-| `test/` (Elixir) | Elixir | 25 | 5,267 |
-| `host/tests` (Rust) | Rust | 8 | 1,804 |
-| `config/` | Elixir | 4 | 278 |
-| **Grand total (incl. tests + config)** | | **118** | **20,863** |
+| `lib/hermes/gateway` — connector tree (7 platforms) | Elixir | 3,010 |
+| `lib/hermes/sessions` — SessionServer, TurnLoop, Store, Compaction, Search | Elixir | 2,788 |
+| `lib/hermes/tools` — registry, dispatcher, tools, sidecar clients, clarify | Elixir | 2,538 |
+| `lib/hermes/providers` — transport behaviour + anthropic/openai/mock | Elixir | 958 |
+| `lib/hermes/skills` + `lib/hermes/curator` — learning loop | Elixir | 771 |
+| `lib/hermes/catalog` (+ `catalog.ex`) — model/provider manager | Elixir | 539 |
+| `lib/hermes_web` — Phoenix channels + LiveView dashboard | Elixir | 546 |
+| `lib/hermes` core — application, supervision, approvals, native loader | Elixir | 748 |
+| `host/src` — CLI, ratatui TUI (+ `/model`,`/providers` pickers), BEAM supervisor, **sidecars** | Rust | 3,667 |
+| `host/native/src` — **the Rustler NIF** (token counting) | Rust | 46 |
+| **Production total** | | **15,611** |
+| `test/` (Elixir) | Elixir | 5,774 |
+| `host/tests` (Rust) | Rust | 1,804 |
+| `config/` | Elixir | 278 |
+| **Grand total (incl. tests + config)** | | **~23,500** |
 
-Production split: **Elixir 10,392 (77%) · Rust 3,122 (23%)**. The Rust footprint is small and
+Production split: **Elixir 11,898 (76%) · Rust 3,713 (24%)**. The Rust footprint is small and
 deliberate — it does only what must be native (launcher, TUI, OS isolation, hot math). Note how tiny
 the **NIF** is (46 lines): the architecture rule is to keep NIFs minimal, because code inside the BEAM
 can crash the whole VM.
@@ -87,13 +87,14 @@ can crash the whole VM.
 ```mermaid
 pie showData title Production lines of code by component
     "Elixir · gateway" : 3010
-    "Elixir · tools" : 2467
-    "Elixir · sessions" : 2190
-    "Elixir · providers" : 911
-    "Elixir · skills + curator" : 767
-    "Elixir · web (channels + LiveView)" : 420
-    "Elixir · core / app" : 627
-    "Rust · host (CLI / TUI / launcher / sidecars)" : 3076
+    "Elixir · sessions" : 2788
+    "Elixir · tools" : 2538
+    "Elixir · providers" : 958
+    "Elixir · skills + curator" : 771
+    "Elixir · catalog (model/provider manager)" : 539
+    "Elixir · web (channels + LiveView)" : 546
+    "Elixir · core / app" : 748
+    "Rust · host (CLI / TUI / launcher / sidecars)" : 3667
     "Rust · NIF (token counting)" : 46
 ```
 
@@ -478,6 +479,35 @@ stateDiagram-v2
 
 ---
 
+## Model & provider manager
+
+You can run Hermes against any OpenAI-compatible endpoint — and switch models/providers live — without
+editing config or restarting. [`Hermes.Catalog`](lib/hermes/catalog.ex) merges a **code-defined set of
+built-ins** (always available, so resolution works on a fresh DB and in tests) with **custom rows** in
+the `providers`/`models` tables. A provider's `kind` (`openai` / `anthropic` / `mock`) selects the
+transport module; OpenAI-compatible providers each carry their own `base_url` and credential
+(`api_key` stored, or `api_key_env` read at call time). Models carry metadata — `context_window`
+(which drives [compaction](#the-elixir-core-how-a-turn-actually-runs)), `max_output_tokens`, and
+capability flags.
+
+Drive it from the TUI (interactive picker overlays) or the Phoenix channel:
+
+```
+/providers                              # open a picker of providers; Enter switches the live session
+/providers add mylab http://host/v1 sk-…  # register a custom OpenAI-compatible provider
+/providers remove mylab
+/model                                  # open a picker of the current provider's models
+/model moonshotai/Kimi-K2.7-Code        # switch model directly
+/model add my-finetune 32000            # add a custom model with a context window
+```
+
+Under the hood the TUI sends `session:config` / `providers:*` / `models:*` channel events; the server
+applies them via `SessionServer.set_config/2` and `Hermes.Catalog`, then pushes
+`providers:listed` / `models:listed` / `session:config` back so every surface (TUI + LiveView) stays in
+sync. This also fixed the previous `/model` no-op (the channel had no `session:config` handler).
+
+---
+
 ## Feature parity vs. the original
 
 Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · ⏸️ deferred (planned, not yet) · ❌ cut
@@ -494,8 +524,10 @@ Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · �
 | Prompt caching | ✅ | header/marker injection |
 | Error classifier / retry-fallback | ✅ | `with` + supervisor restarts |
 | Per-session fault isolation | ➕ | structural via OTP, not bolt-on |
-| Incremental streaming deltas to UI | 🚧 | response assembled whole; `stream:delta` contract exists |
-| Context compression | 🚧 | `CompressionLock` schema exists, logic unwired |
+| Incremental streaming deltas to UI | ✅ | providers broadcast `{:stream_delta, …}` mid-stream via `:stream_to` |
+| Context compression | ✅ | `Hermes.Sessions.Compaction` — token-window driven, `CompressionLock` serialized |
+| Runtime session/message persistence | ✅ ➕ | `Hermes.Sessions.Store` write-through (value-delta, FTS auto-populates) |
+| Model / provider manager | ✅ ➕ | `Hermes.Catalog` — custom providers/models with metadata; `/model` & `/providers` |
 
 ### Tools
 
@@ -507,7 +539,7 @@ Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · �
 | `memory` + `session_search` | ✅ | FTS5-backed |
 | Skills (`skill_manage` / list / view) | ✅ | |
 | `todo` | ✅ | |
-| `clarify` | 🚧 | channel handler stubbed |
+| `clarify` | ✅ | registered tool; broadcasts `clarify:request`, pauses the turn for the user's reply |
 | `cronjob` / routines | ✅ | Oban |
 | Web search / extract | ✅ | |
 | Browser automation (12 tools) | ⏸️ | future Playwright/CDP sidecar |
@@ -542,7 +574,8 @@ Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · �
 | Original transport | Status | Notes |
 |---|---|---|
 | `anthropic` (Messages API) | ✅ | full translation layer |
-| `chat_completions` (OpenAI-compatible) | ✅ | default; Makora base URL |
+| `chat_completions` (OpenAI-compatible) | ✅ | default; per-provider base URL via the catalog |
+| Custom OpenAI-compatible endpoints | ✅ ➕ | add via `/providers add`; each gets its own base_url + key |
 | `bedrock` | ⏸️ | port incrementally |
 | `codex` | ⏸️ | |
 | `gemini` / `antigravity` (OAuth) | ⏸️ | live upstream — deferred, not cut |
@@ -555,7 +588,7 @@ Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · �
 | telegram · discord · slack · whatsapp · signal · email · feishu | ✅ | 7 Tier-1 |
 | Reconnect / restart watchers | ➕ | supervisor strategies replace hand-rolled watchers |
 | Authz / allowlist | ✅ | |
-| Approval flow | 🚧 | PubSub + selective `receive`; channel handler stubbed |
+| Approval flow (tool approval) | ✅ | `Hermes.Approvals` — `approval:request`/`respond` blocks the turn until the user decides |
 | Streaming transports (edit / off) | ✅ | per-connector strategy table |
 | 24 other connectors (matrix, teams, …) | ⏸️ | Tier-2 + long-tail |
 
@@ -565,6 +598,8 @@ Legend:  ✅ ported · 🚧 partial / in progress · ➕ new in the rewrite · �
 |---|---|---|
 | CLI entry | ✅ ➕ | now the Rust `hermes-host` |
 | TUI | ✅ | **ratatui** (was Ink/React) |
+| TUI `/model` & `/providers` pickers | ✅ ➕ | interactive overlay; switches the live session via `session:config` |
+| Server slash commands (`slash:exec`) | ✅ | e.g. `/compact` forces context compaction |
 | Unified wire protocol | ➕ | Phoenix Channels replaces 3 separate transports |
 | Web dashboard | 🚧 | basic LiveView (sessions/status); full parity deferred |
 | Single fat binary | ➕ | new — original shipped no compiled binary |
@@ -596,6 +631,9 @@ Capabilities the original did **not** have, gained structurally from the Elixir+
   same PubSub, instead of three bespoke transports.
 - **OS-level sandboxing for untrusted execution** — env-scrubbing + memory rlimits + process-group
   kill-trees, isolated from the VM.
+- **A persisted model/provider catalog** — add custom OpenAI-compatible providers (each with its own
+  base_url + key) and models (with context-window metadata that drives compaction), managed live from
+  the TUI via `/providers` and `/model`.
 
 ---
 
@@ -678,39 +716,49 @@ graph LR
 - **E — Server delivery + packaging.** systemd/container server mode + per-(OS, arch) fat-binary
   matrix. 🚧 Dockerfile + deploy scaffolding present.
 
+### Recently closed
+
+- **Incremental streaming** is now wired — providers broadcast `{:stream_delta, text}` on the session
+  topic when `:stream_to` is set, and the channel forwards `stream:delta` to the TUI/LiveView.
+- **Context compression** is implemented (`Hermes.Sessions.Compaction`), driven by the model's
+  `context_window` and serialized via `CompressionLock`; `/compact` forces it.
+- **Runtime persistence** — sessions/messages now write through to SQLite (`Hermes.Sessions.Store`),
+  so FTS recall / `session_search` return real data and the dashboard survives restarts.
+- **Human-in-the-loop** — `approval:respond`, `slash:exec`, and `clarify` are implemented (no longer
+  stubs); tool approval blocks the turn until the user decides.
+- **The `/model` no-op is fixed** — `session:config`/`session:list` handlers exist, plus a full
+  `/providers` + `/model` manager.
+
 ### Known gaps / drift (honest status)
 
-- **Incremental streaming to PubSub is not wired yet** — `provider.stream/4` assembles the *whole*
-  response before returning; `stream:delta` events exist in the channel contract but aren't emitted
-  mid-flight.
-- **Context compression is deferred** — the `CompressionLock` schema exists but the logic is not
-  wired into the turn loop.
 - **Anthropic SSE parser** lacks the cross-chunk buffering and HTTP-error handling the OpenAI parser
   has.
 - **Provider drift from the spec** — Milestone A specified *Anthropic-first*, but the as-built default
   provider ([`openai.ex`](lib/hermes/providers/openai.ex)) is an OpenAI-compatible transport pointing
-  at Makora.
+  at Makora (now one entry in the catalog among built-ins + customs).
 - **A turn-loop Task crash** leaves the session without a `:turn_finished` reply (the loop runs in an
   *unlinked* Task) — a deliberate isolation tradeoff, but the session can be left `:running`.
-- **WebSocket channel has no auth** (localhost boundary, Milestone A); `approval:respond` /
-  `slash:exec` / `clarify` are stubs; gateway webhook HTTP listeners are stubbed.
+- **WebSocket channel has no auth** (localhost boundary, Milestone A); gateway webhook HTTP listeners
+  are still stubbed; stored provider API keys sit in plain SQLite (local-desktop threat model).
 
 ---
 
 ## Repository layout
 
 ```
-lib/hermes/                  # the Elixir agent brain (10,392 LOC)
+lib/hermes/                  # the Elixir agent brain (11,898 LOC)
   application.ex             #   OTP supervision tree
   native.ex                  #   Rustler NIF loader (Hermes.Native)
-  sessions/                  #   SessionServer, TurnLoop, IterationBudget, Search, schemas
+  approvals.ex               #   human-in-the-loop tool approval
+  catalog.ex  catalog/       #   model/provider manager (built-ins + custom providers/models)
+  sessions/                  #   SessionServer, TurnLoop, Store, Compaction, Search, schemas
   providers/                 #   Transport behaviour + anthropic / openai / mock
-  tools/                     #   Registry, Dispatcher, *_sidecar, file/memory/skill/delegate tools
+  tools/                     #   Registry, Dispatcher, *_sidecar, file/memory/skill/clarify tools
   gateway/                   #   supervised connector tree (7 Tier-1 platforms)
   curator/                   #   Worker (Oban cron) + BackgroundReview
   skills/                    #   SkillManager / Provenance / Telemetry
-lib/hermes_web/              # Phoenix surface: channels (TUI) + LiveView (dashboard)
-host/src/                    # Rust: hermes-host (CLI/TUI/launcher) + hermes-sidecar (3,076 LOC)
+lib/hermes_web/              # Phoenix surface: channels (TUI manager + HITL) + LiveView (dashboard)
+host/src/                    # Rust: hermes-host (CLI/TUI/launcher + /model,/providers pickers) + sidecar
 host/native/                 # Rust: hermes_native — the Rustler NIF cdylib (46 LOC)
 config/                      # config.exs / runtime.exs / dev.exs / prod.exs
 01-inventory.md … 07-*.md    # the audit + rewrite plan that drove this port
