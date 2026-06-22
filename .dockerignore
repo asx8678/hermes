@@ -1,0 +1,19 @@
+# Build artifacts and dependencies
+/_build/
+/deps/
+/host/target/
+/host/embedded/
+/priv/native/
+
+# Local databases
+*.db
+*.db-*
+
+# Git / tooling
+/.git/
+/.elixir_ls/
+/.claude/
+/.beads/
+/cover/
+/doc/
+/tmp/

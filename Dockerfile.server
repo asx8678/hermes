@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+# Server mode: headless BEAM release. No Rust desktop host.
+FROM elixir:1.20-slim AS builder
+
+# Install build tooling and Rust for the rustler tokenization NIF.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+
+WORKDIR /app
+
+COPY mix.exs mix.lock ./
+RUN mix local.hex --force && mix local.rebar --force && mix deps.get --only prod
+
+COPY . .
+RUN MIX_ENV=prod mix release --overwrite
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libgcc-s1 \
+    libsqlite3-0 \
+    libssl3 \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/_build/prod/rel/hermes ./
+
+ENV PHX_SERVER=true
+ENV DATABASE_PATH=/data/hermes.db
+ENV SECRET_KEY_BASE=
+ENV PORT=4000
+
+EXPOSE 4000
+VOLUME ["/data"]
+
+CMD ["./bin/hermes", "start"]

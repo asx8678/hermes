@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes AI Agent (server mode)
+After=network.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+WorkingDirectory=/opt/hermes
+EnvironmentFile=/opt/hermes/etc/hermes.env
+ExecStart=/opt/hermes/bin/hermes start
+ExecStop=/opt/hermes/bin/hermes stop
+ExecStartPre=/opt/hermes/bin/hermes eval Hermes.Release.migrate
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

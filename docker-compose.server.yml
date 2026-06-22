@@ -1,0 +1,23 @@
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    image: hermes-server:latest
+    container_name: hermes-server
+    ports:
+      - "${HERMES_PORT:-4000}:4000"
+    volumes:
+      - hermes-data:/data
+    env_file:
+      - deploy/systemd/hermes.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "./bin/hermes", "pid"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  hermes-data:
