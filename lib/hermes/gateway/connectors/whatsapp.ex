@@ -74,10 +74,8 @@ defmodule Hermes.Gateway.Connectors.WhatsApp do
         bot_api: bot_api
       })
 
-      case connect(state) do
-        {:ok, state} -> {:ok, state}
-        {:error, reason} -> {:stop, reason}
-      end
+      {:ok, state} = connect(state)
+      {:ok, state}
     end
   end
 
@@ -120,12 +118,11 @@ defmodule Hermes.Gateway.Connectors.WhatsApp do
 
   @impl true
   def handle_call({:handle_inbound, payload}, _from, state) do
-    case handle_inbound(payload, state) do
-      {:ok, new_state} -> {:reply, :ok, new_state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
+    {:ok, new_state} = handle_inbound(payload, state)
+    {:reply, :ok, new_state}
   end
 
+  @impl true
   def handle_info({:turn_complete, %{session_id: session_id} = payload}, state) do
     final_response = payload[:final_response] || payload["final_response"]
 
@@ -152,6 +149,7 @@ defmodule Hermes.Gateway.Connectors.WhatsApp do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:turn_error, %{session_id: session_id} = payload}, state) do
     error = payload[:error] || payload["error"]
 
@@ -180,6 +178,7 @@ defmodule Hermes.Gateway.Connectors.WhatsApp do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end

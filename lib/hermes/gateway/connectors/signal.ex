@@ -78,14 +78,9 @@ defmodule Hermes.Gateway.Connectors.Signal do
         client: client
       })
 
-      case connect(state) do
-        {:ok, state} ->
-          state = schedule_poll(state, poll_interval)
-          {:ok, state}
-
-        {:error, reason} ->
-          {:stop, reason}
-      end
+      {:ok, state} = connect(state)
+      state = schedule_poll(state, poll_interval)
+      {:ok, state}
     end
   end
 

@@ -29,7 +29,7 @@ defmodule Hermes.Gateway.Connectors.WhatsAppCloud do
     request(token, :post, "/#{phone_number_id}/messages", body, opts)
   end
 
-  defp request(token, method, path, body, opts \\ []) do
+  defp request(token, method, path, body, opts) do
     url = @api_base <> path
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     req = Finch.build(method, url, headers, Jason.encode!(body))

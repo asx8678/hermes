@@ -27,6 +27,7 @@ defmodule Hermes.Gateway.Connectors.Feishu do
     :app_secret,
     :bot_api,
     :session_provider,
+    :access_token,
     :connected,
     subscriptions: MapSet.new(),
     chat_sessions: %{}
@@ -72,22 +73,25 @@ defmodule Hermes.Gateway.Connectors.Feishu do
       Process.put(__MODULE__, %{
         app_id: app_id,
         app_secret: app_secret,
-        bot_api: bot_api
+        bot_api: bot_api,
+        access_token: nil
       })
 
-      case connect(state) do
-        {:ok, state} -> {:ok, state}
-        {:error, reason} -> {:stop, reason}
-      end
+      {:ok, state} = connect(state)
+      {:ok, state}
     end
   end
 
   @impl Hermes.Gateway.Connector
   def connect(state) do
     case state.bot_api.get_tenant_access_token(state.app_id, state.app_secret) do
-      {:ok, _result} ->
+      {:ok, %{"tenant_access_token" => token}} ->
         Logger.info("Feishu connector authenticated")
-        {:ok, %{state | connected: true}}
+        {:ok, %{state | connected: true, access_token: token}}
+
+      {:ok, result} ->
+        Logger.error("Feishu tenant_access_token failed: #{inspect(result)}")
+        {:error, :missing_token}
 
       {:error, reason} ->
         Logger.error("Feishu tenant_access_token failed: #{inspect(reason)}")
@@ -106,20 +110,12 @@ defmodule Hermes.Gateway.Connectors.Feishu do
       nil ->
         {:error, :not_initialized}
 
-      %{app_id: app_id, app_secret: app_secret, bot_api: bot_api} ->
+      %{access_token: token, bot_api: bot_api} when is_binary(token) ->
         chat_id = Keyword.fetch!(opts, :chat_id)
+        bot_api.send_message(token, chat_id, message, opts)
 
-        case bot_api.get_tenant_access_token(app_id, app_secret) do
-          {:ok, %{"tenant_access_token" => token}} ->
-            bot_api.send_message(token, chat_id, message, opts)
-
-          {:ok, result} ->
-            Logger.error("Feishu send could not obtain token: #{inspect(result)}")
-            {:error, :missing_token}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
+      _ ->
+        {:error, :missing_token}
     end
   end
 
@@ -132,16 +128,10 @@ defmodule Hermes.Gateway.Connectors.Feishu do
     chat_id = Keyword.fetch!(opts, :chat_id)
 
     result =
-      case state.bot_api.get_tenant_access_token(state.app_id, state.app_secret) do
-        {:ok, %{"tenant_access_token" => token}} ->
-          state.bot_api.send_message(token, chat_id, message, opts)
-
-        {:ok, result} ->
-          Logger.error("Feishu send could not obtain token: #{inspect(result)}")
-          {:error, :missing_token}
-
-        {:error, reason} ->
-          {:error, reason}
+      if is_binary(state.access_token) do
+        state.bot_api.send_message(state.access_token, chat_id, message, opts)
+      else
+        {:error, :missing_token}
       end
 
     {:reply, result, state}
@@ -149,12 +139,11 @@ defmodule Hermes.Gateway.Connectors.Feishu do
 
   @impl true
   def handle_call({:handle_inbound, payload}, _from, state) do
-    case handle_inbound(payload, state) do
-      {:ok, new_state} -> {:reply, :ok, new_state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
-    end
+    {:ok, new_state} = handle_inbound(payload, state)
+    {:reply, :ok, new_state}
   end
 
+  @impl true
   def handle_info({:turn_complete, %{session_id: session_id} = payload}, state) do
     final_response = payload[:final_response] || payload["final_response"]
 
@@ -164,13 +153,10 @@ defmodule Hermes.Gateway.Connectors.Feishu do
 
         if is_binary(final_response) and not is_nil(chat_id) do
           _ =
-            state.bot_api.get_tenant_access_token(state.app_id, state.app_secret)
-            |> case do
-              {:ok, %{"tenant_access_token" => token}} ->
-                state.bot_api.send_message(token, chat_id, final_response, [])
-
-              _ ->
-                :error
+            if is_binary(state.access_token) do
+              state.bot_api.send_message(state.access_token, chat_id, final_response, [])
+            else
+              :error
             end
         end
 
@@ -182,6 +168,7 @@ defmodule Hermes.Gateway.Connectors.Feishu do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:turn_error, %{session_id: session_id} = payload}, state) do
     error = payload[:error] || payload["error"]
 
@@ -193,13 +180,10 @@ defmodule Hermes.Gateway.Connectors.Feishu do
           text = "Error: #{error}"
 
           _ =
-            state.bot_api.get_tenant_access_token(state.app_id, state.app_secret)
-            |> case do
-              {:ok, %{"tenant_access_token" => token}} ->
-                state.bot_api.send_message(token, chat_id, text, [])
-
-              _ ->
-                :error
+            if is_binary(state.access_token) do
+              state.bot_api.send_message(state.access_token, chat_id, text, [])
+            else
+              :error
             end
         end
 
@@ -211,6 +195,7 @@ defmodule Hermes.Gateway.Connectors.Feishu do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end

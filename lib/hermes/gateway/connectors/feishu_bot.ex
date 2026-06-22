@@ -35,6 +35,7 @@ defmodule Hermes.Gateway.Connectors.FeishuBot do
     }
 
     headers = [{"Authorization", "Bearer #{token}"}]
+    _ = opts
     request(:post, "/im/v1/messages?receive_id_type=chat_id", body, headers)
   end
 
