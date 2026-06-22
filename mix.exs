@@ -40,6 +40,7 @@ defmodule Hermes.MixProject do
   defp deps do
     [
       {:phoenix, "~> 1.8.5"},
+      {:phoenix_live_view, "~> 1.0"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},
       {:ecto_sqlite3, ">= 0.0.0"},
@@ -51,7 +52,9 @@ defmodule Hermes.MixProject do
       {:req, "~> 0.5"},
       {:oban, "~> 2.18"},
       {:rustler, "~> 0.31", runtime: false},
-      {:bandit, "~> 1.5"}
+      {:bandit, "~> 1.5"},
+      {:lazy_html, ">= 0.1.0", only: :test},
+      {:elixir_make, "~> 0.9.0", override: true}
     ]
   end
 

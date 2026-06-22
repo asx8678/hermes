@@ -105,7 +105,9 @@ defmodule Hermes.Sessions.SessionServer do
       status: :idle
     }
 
+    Process.flag(:trap_exit, true)
     Registry.register(Hermes.Sessions.Registry, {__MODULE__, session_id}, nil)
+    broadcast_session_started(state)
     {:ok, state}
   end
 
@@ -121,7 +123,7 @@ defmodule Hermes.Sessions.SessionServer do
 
   @impl true
   def handle_cast({:set_status, status}, state) do
-    {:noreply, %{state | status: status}}
+    {:noreply, set_status_and_broadcast(state, status)}
   end
 
   @impl true
@@ -131,12 +133,12 @@ defmodule Hermes.Sessions.SessionServer do
       {:noreply, state}
     else
       user_msg = %{role: "user", content: message}
-      new_state = %{state | messages: state.messages ++ [user_msg], status: :running}
+      new_state = %{state | messages: state.messages ++ [user_msg]}
       session_pid = self()
 
       Task.start(fn -> run_turn_in_task(session_pid, new_state) end)
 
-      {:noreply, new_state}
+      {:noreply, set_status_and_broadcast(new_state, :running)}
     end
   end
 
@@ -144,19 +146,28 @@ defmodule Hermes.Sessions.SessionServer do
   def handle_cast({:turn_finished, %{ok: true, result: result}}, state) do
     broadcast_turn_complete(state.session_id, result)
 
-    {:noreply,
-     %{
-       state
-       | messages: result.messages,
-         status: :idle,
-         iteration_budget_used: state.iteration_budget_used + result.api_calls
-     }}
+    new_state = %{
+      state
+      | messages: result.messages,
+        iteration_budget_used: state.iteration_budget_used + result.api_calls
+    }
+
+    {:noreply, set_status_and_broadcast(new_state, :idle)}
   end
 
   @impl true
   def handle_cast({:turn_finished, %{ok: false, error: error}}, state) do
     broadcast_turn_error(state.session_id, error)
-    {:noreply, %{state | status: :idle}}
+    {:noreply, set_status_and_broadcast(state, :idle)}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "sessions",
+      {:session_stopped, state.session_id}
+    )
   end
 
   # ----------------------------------------------------------------------------
@@ -238,6 +249,30 @@ defmodule Hermes.Sessions.SessionServer do
          session_id: session_id,
          error: error,
          partial: partial
+       }}
+    )
+  end
+
+  defp set_status_and_broadcast(state, status) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "sessions",
+      {:session_status, state.session_id, status}
+    )
+
+    %{state | status: status}
+  end
+
+  defp broadcast_session_started(state) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "sessions",
+      {:session_started,
+       %{
+         id: state.session_id,
+         model: state.model,
+         status: state.status,
+         message_count: length(state.messages)
        }}
     )
   end

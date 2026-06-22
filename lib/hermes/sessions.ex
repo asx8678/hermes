@@ -58,6 +58,28 @@ defmodule Hermes.Sessions do
   end
 
   @doc """
+  Returns a list of all active sessions as dashboard-friendly maps.
+  """
+  @spec list_sessions() :: [
+          %{id: String.t(), model: String.t(), status: atom(), message_count: non_neg_integer()}
+        ]
+  def list_sessions do
+    Hermes.Sessions.Registry
+    |> Registry.select([
+      {{{Hermes.Sessions.SessionServer, :"$1"}, :"$2", :_}, [], [:"$2"]}
+    ])
+    |> Enum.flat_map(fn pid ->
+      case SessionServer.get_state(pid) do
+        %{session_id: id, model: model, status: status, messages: messages} ->
+          [%{id: id, model: model, status: status, message_count: length(messages)}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  @doc """
   Triggers a non-blocking turn for the session identified by `session_id`.
 
   See `Hermes.Sessions.SessionServer.run_turn_async/2`.
