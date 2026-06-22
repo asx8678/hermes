@@ -1,0 +1,24 @@
+{
+  "name": "single_text_response",
+  "description": "User sends a greeting and the provider returns a plain text answer with no tool calls.",
+  "python_source": "agent/conversation_loop.py:4144-4480",
+  "input": {
+    "session_id": "golden_single_text",
+    "messages": [{"role": "user", "content": "Hello"}],
+    "max_iterations": 5
+  },
+  "responses": [
+    {
+      "type": "ok",
+      "content": "Hi there!",
+      "finish_reason": "stop",
+      "tool_calls": []
+    }
+  ],
+  "expected": {
+    "status": "ok",
+    "final_response": "Hi there!",
+    "api_calls": 1,
+    "completed": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "budget_exhaustion",
+  "description": "The iteration budget is already exhausted when the turn starts, so the loop exits immediately with budget_exhausted.",
+  "python_source": "agent/conversation_loop.py:605-614",
+  "input": {
+    "session_id": "golden_budget_exhausted",
+    "messages": [{"role": "user", "content": "keep going"}],
+    "max_iterations": 5,
+    "budget": {"max_total": 0}
+  },
+  "responses": [],
+  "expected": {
+    "status": "error",
+    "final_response": null,
+    "api_calls": 0,
+    "completed": false,
+    "partial": true,
+    "message_contains": "budget_exhausted"
+  }
+}

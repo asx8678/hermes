@@ -56,4 +56,15 @@ defmodule Hermes.Sessions do
   def set_status(pid, status) when is_pid(pid) and is_atom(status) do
     SessionServer.set_status(pid, status)
   end
+
+  @doc """
+  Triggers a non-blocking turn for the session identified by `session_id`.
+
+  See `Hermes.Sessions.SessionServer.run_turn_async/2`.
+  """
+  @spec run_turn_async(String.t(), String.t()) :: :ok | {:error, :not_found}
+  def run_turn_async(session_id, message)
+      when is_binary(session_id) and is_binary(message) do
+    SessionServer.run_turn_async(session_id, message)
+  end
 end

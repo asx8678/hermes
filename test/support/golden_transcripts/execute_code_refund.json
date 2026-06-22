@@ -1,0 +1,37 @@
+{
+  "name": "execute_code_budget_refund",
+  "description": "A turn containing only execute_code is refunded, so a one-iteration budget can still reach the final text response.",
+  "python_source": "agent/conversation_loop.py:4083-4088",
+  "input": {
+    "session_id": "golden_execute_code_refund",
+    "messages": [{"role": "user", "content": "compute"}],
+    "max_iterations": 5,
+    "budget": {"max_total": 1}
+  },
+  "responses": [
+    {
+      "type": "ok",
+      "content": null,
+      "finish_reason": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "tc_code",
+          "name": "execute_code",
+          "arguments": {"language": "elixir", "code": "1 + 1"}
+        }
+      ]
+    },
+    {
+      "type": "ok",
+      "content": "Refunded turn complete",
+      "finish_reason": "stop",
+      "tool_calls": []
+    }
+  ],
+  "expected": {
+    "status": "ok",
+    "final_response": "Refunded turn complete",
+    "api_calls": 2,
+    "completed": true
+  }
+}

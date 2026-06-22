@@ -1,0 +1,38 @@
+{
+  "name": "single_tool_call",
+  "description": "Provider asks to read a file, the file tool runs, then the provider delivers a final answer.",
+  "python_source": "agent/conversation_loop.py:3791-4142",
+  "input": {
+    "session_id": "golden_single_tool",
+    "messages": [{"role": "user", "content": "read foo.txt"}],
+    "max_iterations": 5
+  },
+  "responses": [
+    {
+      "type": "ok",
+      "content": null,
+      "finish_reason": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "tc1",
+          "name": "read_file",
+          "arguments": {"path": "test/support/golden_transcripts/sample.txt"}
+        }
+      ]
+    },
+    {
+      "type": "ok",
+      "content": "Here's the file: file content here",
+      "finish_reason": "stop",
+      "tool_calls": []
+    }
+  ],
+  "expected": {
+    "status": "ok",
+    "final_response": "Here's the file: file content here",
+    "api_calls": 2,
+    "completed": true,
+    "has_tool_result": true,
+    "tool_call_id": "tc1"
+  }
+}

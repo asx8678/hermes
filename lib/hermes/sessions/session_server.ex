@@ -5,12 +5,18 @@ defmodule Hermes.Sessions.SessionServer do
   Holds the mutable state for one conversation: messages, model/provider
   configuration, and iteration-budget bookkeeping.
 
+  Each server registers itself in `Hermes.Sessions.Registry` under
+  `{Hermes.Sessions.SessionServer, session_id}` so it can be located by
+  session id from the Phoenix channel boundary.
+
   Budget defaults are ported from the Python agent:
   - `agent/iteration_budget.py:17` (`IterationBudget`)
   - `agent/iteration_budget.py:23` (`max_total` default 90)
   """
 
   use GenServer
+
+  alias Hermes.Sessions.TurnLoop
 
   @default_model "claude-sonnet-4-20250514"
   @default_provider :anthropic
@@ -50,14 +56,45 @@ defmodule Hermes.Sessions.SessionServer do
   def set_status(pid, status) when is_atom(status),
     do: GenServer.cast(pid, {:set_status, status})
 
+  @doc """
+  Looks up a session server by its public session id.
+  """
+  @spec whereis(String.t()) :: pid() | nil
+  def whereis(session_id) when is_binary(session_id) do
+    case Registry.lookup(Hermes.Sessions.Registry, {__MODULE__, session_id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
+
+  @doc """
+  Triggers a non-blocking turn for `session_id` using `message` as the user
+  prompt.
+
+  The user message is appended to the session history, the session status is
+  set to `:running`, and `Hermes.Sessions.TurnLoop.run/1` is executed in an
+  unlinked task.  When the turn finishes, the server broadcasts either a
+  `turn:complete` or `turn:error` event on the session's PubSub topic.
+  """
+  @spec run_turn_async(String.t(), String.t()) :: :ok | {:error, :not_found}
+  def run_turn_async(session_id, message)
+      when is_binary(session_id) and is_binary(message) do
+    case whereis(session_id) do
+      nil -> {:error, :not_found}
+      pid -> GenServer.cast(pid, {:run_turn_async, message})
+    end
+  end
+
   # ----------------------------------------------------------------------------
   # GenServer callbacks
   # ----------------------------------------------------------------------------
 
   @impl true
   def init(opts) do
+    session_id = Keyword.fetch!(opts, :session_id)
+
     state = %__MODULE__{
-      session_id: Keyword.fetch!(opts, :session_id),
+      session_id: session_id,
       messages: Keyword.get(opts, :messages, []),
       model: Keyword.get(opts, :model, @default_model),
       provider: Keyword.get(opts, :provider, @default_provider),
@@ -68,6 +105,7 @@ defmodule Hermes.Sessions.SessionServer do
       status: :idle
     }
 
+    Registry.register(Hermes.Sessions.Registry, {__MODULE__, session_id}, nil)
     {:ok, state}
   end
 
@@ -86,9 +124,96 @@ defmodule Hermes.Sessions.SessionServer do
     {:noreply, %{state | status: status}}
   end
 
+  @impl true
+  def handle_cast({:run_turn_async, message}, state) do
+    if state.status == :running do
+      broadcast_turn_error(state.session_id, %{error: "session busy", partial: true})
+      {:noreply, state}
+    else
+      user_msg = %{role: "user", content: message}
+      new_state = %{state | messages: state.messages ++ [user_msg], status: :running}
+      session_pid = self()
+
+      Task.start(fn -> run_turn_in_task(session_pid, new_state) end)
+
+      {:noreply, new_state}
+    end
+  end
+
+  @impl true
+  def handle_cast({:turn_finished, %{ok: true, result: result}}, state) do
+    broadcast_turn_complete(state.session_id, result)
+
+    {:noreply,
+     %{
+       state
+       | messages: result.messages,
+         status: :idle,
+         iteration_budget_used: state.iteration_budget_used + result.api_calls
+     }}
+  end
+
+  @impl true
+  def handle_cast({:turn_finished, %{ok: false, error: error}}, state) do
+    broadcast_turn_error(state.session_id, error)
+    {:noreply, %{state | status: :idle}}
+  end
+
   # ----------------------------------------------------------------------------
   # Helpers
   # ----------------------------------------------------------------------------
+
+  defp run_turn_in_task(session_pid, state) do
+    opts = [
+      session_id: state.session_id,
+      messages: state.messages,
+      model: state.model,
+      provider: provider_module(state.provider),
+      api_mode: state.api_mode,
+      max_iterations: state.max_iterations,
+      session_pid: session_pid
+    ]
+
+    case TurnLoop.run(opts) do
+      {:ok, result} ->
+        GenServer.cast(session_pid, {:turn_finished, %{ok: true, result: result}})
+
+      {:error, error} ->
+        GenServer.cast(session_pid, {:turn_finished, %{ok: false, error: error}})
+    end
+  end
+
+  defp provider_module(:anthropic), do: Hermes.Providers.Anthropic
+  defp provider_module(mod) when is_atom(mod), do: mod
+
+  defp broadcast_turn_complete(session_id, result) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "session:#{session_id}",
+      {:turn_complete,
+       %{
+         final_response: result.final_response,
+         api_calls: result.api_calls,
+         completed: true
+       }}
+    )
+  end
+
+  defp broadcast_turn_error(session_id, %{message: message, partial: partial}) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "session:#{session_id}",
+      {:turn_error, %{error: message, partial: partial}}
+    )
+  end
+
+  defp broadcast_turn_error(session_id, %{error: error, partial: partial}) do
+    Phoenix.PubSub.broadcast(
+      Hermes.PubSub,
+      "session:#{session_id}",
+      {:turn_error, %{error: error, partial: partial}}
+    )
+  end
 
   defp generate_session_id do
     :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
