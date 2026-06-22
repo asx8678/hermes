@@ -1,4 +1,4 @@
-use crate::app::{role_label, role_style, App, AppCommand, AppStatus, Client};
+use crate::app::{role_label, role_style, App, AppCommand, AppStatus, ApprovalRequest, Client};
 use crate::ws_client::ChannelsClient;
 use anyhow::{anyhow, Result};
 use crossterm::{
@@ -102,6 +102,11 @@ fn message_lines(message: &crate::app::ChatMessage, width: usize) -> Vec<Line<'s
 }
 
 fn render_input(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
+    if let Some(ref req) = app.pending_approval {
+        render_approval_prompt(frame, area, req);
+        return;
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .title("Input")
@@ -115,6 +120,30 @@ fn render_input(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
         Span::raw(app.input.clone()),
         Span::styled("█", Style::default().fg(Color::Green)),
     ]));
+    let paragraph = Paragraph::new(text).block(block);
+    frame.render_widget(paragraph, area);
+}
+
+fn render_approval_prompt(frame: &mut Frame, area: Rect, req: &ApprovalRequest) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Approval Required")
+        .border_style(Style::default().fg(Color::Red));
+    let text = Text::from(vec![
+        Line::from(vec![
+            Span::raw("Action: "),
+            Span::styled(req.tool_name.clone(), Style::default().fg(Color::Yellow)),
+            Span::raw(" "),
+            Span::raw(req.args.clone()),
+        ]),
+        Line::from(vec![Span::raw("Reason: "), Span::raw(req.reason.clone())]),
+        Line::from(vec![
+            Span::raw("Approve? "),
+            Span::styled("[Y]es", Style::default().fg(Color::Green)),
+            Span::raw(" / "),
+            Span::styled("[N]o", Style::default().fg(Color::Red)),
+        ]),
+    ]);
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 }
@@ -230,16 +259,25 @@ async fn run_loop(
                                     .send(&app.channel_topic, "send_prompt", json!({"message": text}))
                                     .await?;
                             }
-                            AppCommand::SlashExec { command } => {
+                            AppCommand::ApprovalRespond { approval_id, approved } => {
+                                app.pending_approval = None;
                                 app.status = AppStatus::Running;
                                 app.ws_client
-                                    .send(&app.channel_topic, "slash:exec", json!({"command": command}))
+                                    .send(
+                                        &app.channel_topic,
+                                        "approval:respond",
+                                        json!({"approval_id": approval_id, "approved": approved}),
+                                    )
                                     .await?;
                             }
-                            AppCommand::ApprovalRespond { choice } => {
-                                app.status = AppStatus::Running;
+                            AppCommand::SendSessionList => {
                                 app.ws_client
-                                    .send(&app.channel_topic, "approval:respond", json!({"choice": choice}))
+                                    .send(&app.channel_topic, "session:list", json!({}))
+                                    .await?;
+                            }
+                            AppCommand::SendSessionConfig { model } => {
+                                app.ws_client
+                                    .send(&app.channel_topic, "session:config", json!({"model": model}))
                                     .await?;
                             }
                             AppCommand::None => {}

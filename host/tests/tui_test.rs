@@ -1,3 +1,5 @@
+use std::future::Future;
+
 use hermes_host::app::{App, AppCommand, AppStatus, Client};
 use hermes_host::ws_client::Message;
 use ratatui::backend::TestBackend;
@@ -14,7 +16,7 @@ impl Client for MockClient {
         topic: &str,
         event: &str,
         payload: Value,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
         self.sent
             .push((topic.to_string(), event.to_string(), payload));
         async { Ok(()) }
@@ -97,12 +99,13 @@ fn input_handling_enter_slash_and_history() {
         kind: KeyEventKind::Press,
         state: crossterm::event::KeyEventState::empty(),
     });
-    assert_eq!(
-        cmd,
-        AppCommand::SlashExec {
-            command: "/help".to_string()
-        }
-    );
+    assert_eq!(cmd, AppCommand::None);
+    assert!(app
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .contains("Available commands"));
     assert!(app.input.is_empty());
 
     app.input = "hello".to_string();
@@ -113,7 +116,7 @@ fn input_handling_enter_slash_and_history() {
             text: "hello".to_string()
         }
     );
-    assert_eq!(app.input_history, vec!["/help", "hello"]);
+    assert_eq!(app.input_history, vec!["hello"]);
 
     // Up recalls the last sent message.
     let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Up));

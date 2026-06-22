@@ -71,16 +71,38 @@ impl ChatMessage {
         }
     }
 }
+/// A pending tool-approval request broadcast by the gateway.
+#[derive(Debug, Clone)]
+pub struct ApprovalRequest {
+    pub approval_id: String,
+    pub tool_name: String,
+    pub args: String,
+    pub reason: String,
+}
+
+/// A pending clarification request broadcast by the turn loop.
+#[derive(Debug, Clone)]
+pub struct ClarifyRequest {
+    pub question: String,
+    pub choices: Vec<String>,
+}
 
 /// High-level command produced by a key press.  The TUI loop translates these
 /// into outbound Phoenix Channel events.
 #[derive(Debug, PartialEq)]
 pub enum AppCommand {
+    /// Nothing to do.
     None,
+    /// Exit the application.
     Exit,
+    /// Send a normal user prompt to the session.
     SendPrompt { text: String },
-    SlashExec { command: String },
-    ApprovalRespond { choice: String },
+    /// Respond to a pending approval request.
+    ApprovalRespond { approval_id: String, approved: bool },
+    /// Request the list of active sessions.
+    SendSessionList,
+    /// Reconfigure the current session with a new model.
+    SendSessionConfig { model: String },
 }
 
 /// TUI state machine.
@@ -102,6 +124,10 @@ pub struct App<T: Client> {
     pub scroll: usize,
     pub model: String,
     pub provider: String,
+    /// Pending tool approval request, if any. Blocks normal input.
+    pub pending_approval: Option<ApprovalRequest>,
+    /// Pending clarification request, if any.
+    pub pending_clarify: Option<ClarifyRequest>,
 }
 
 impl<T: Client> App<T> {
@@ -118,6 +144,8 @@ impl<T: Client> App<T> {
             scroll: 0,
             model: model.into(),
             provider: provider.into(),
+            pending_approval: None,
+            pending_clarify: None,
         }
     }
 
@@ -137,7 +165,6 @@ impl<T: Client> App<T> {
         // is clamped by ratatui, so this reliably shows the newest content.
         self.scroll = usize::MAX;
     }
-
     /// Apply a received Phoenix Channels message to the state machine.
     pub fn handle_ws_message(&mut self, msg: &Message) {
         match msg.event.as_str() {
@@ -147,6 +174,8 @@ impl<T: Client> App<T> {
             "tool:result" => self.handle_tool_result(msg),
             "turn:complete" => self.handle_turn_complete(msg),
             "turn:error" => self.handle_turn_error(msg),
+            "approval:request" => self.handle_approval_request(msg),
+            "clarify:request" => self.handle_clarify_request(msg),
             "session:status" => self.handle_session_status(msg),
             _ => {}
         }
@@ -291,6 +320,98 @@ impl<T: Client> App<T> {
         }
     }
 
+    fn handle_approval_request(&mut self, msg: &Message) {
+        let approval_id = msg
+            .payload
+            .get("approval_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tool_name = msg
+            .payload
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                msg.payload
+                    .get("details")
+                    .and_then(|v| v.get("tool"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("action")
+            .to_string();
+        let args = msg
+            .payload
+            .get("args")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                msg.payload
+                    .get("details")
+                    .and_then(|v| v.get("args"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("")
+            .to_string();
+        let reason = msg
+            .payload
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                msg.payload
+                    .get("details")
+                    .and_then(|v| v.get("reason"))
+                    .and_then(|v| v.as_str())
+            })
+            .unwrap_or("")
+            .to_string();
+
+        self.pending_approval = Some(ApprovalRequest {
+            approval_id: approval_id.clone(),
+            tool_name: tool_name.clone(),
+            args: args.clone(),
+            reason: reason.clone(),
+        });
+        self.status = AppStatus::WaitingForApproval;
+        self.add_system_message(&format!(
+            "Approval required: {} {}\nReason: {}\nApprove? [Y]es / [N]o",
+            tool_name, args, reason
+        ));
+        self.scroll_to_bottom();
+    }
+
+    fn handle_clarify_request(&mut self, msg: &Message) {
+        let question = msg
+            .payload
+            .get("question")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let choices: Vec<String> = msg
+            .payload
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        self.pending_clarify = Some(ClarifyRequest {
+            question: question.clone(),
+            choices: choices.clone(),
+        });
+        let choices_text = if choices.is_empty() {
+            "(type your answer)".to_string()
+        } else {
+            choices.join(", ")
+        };
+        self.add_system_message(&format!(
+            "Clarification needed: {}\nChoices: {}",
+            question, choices_text
+        ));
+        self.scroll_to_bottom();
+    }
+
     /// Handle a crossterm key event and return a high-level command.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppCommand {
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
@@ -299,7 +420,15 @@ impl<T: Client> App<T> {
 
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => AppCommand::Exit,
-            KeyCode::Esc => AppCommand::Exit,
+            KeyCode::Esc => {
+                if let Some(ref req) = self.pending_approval {
+                    return AppCommand::ApprovalRespond {
+                        approval_id: req.approval_id.clone(),
+                        approved: false,
+                    };
+                }
+                AppCommand::Exit
+            }
             KeyCode::Enter => self.handle_enter(),
             KeyCode::Up => {
                 self.cycle_history(-1);
@@ -310,10 +439,24 @@ impl<T: Client> App<T> {
                 AppCommand::None
             }
             KeyCode::Backspace => {
-                let _ = self.input.pop();
+                if !self.is_input_blocked() {
+                    let _ = self.input.pop();
+                }
                 AppCommand::None
             }
             KeyCode::Char(c) => {
+                if self.status == AppStatus::WaitingForApproval {
+                    let lower = c.to_ascii_lowercase();
+                    if let Some(ref req) = self.pending_approval {
+                        if lower == 'y' || lower == 'n' {
+                            return AppCommand::ApprovalRespond {
+                                approval_id: req.approval_id.clone(),
+                                approved: lower == 'y',
+                            };
+                        }
+                    }
+                    return AppCommand::None;
+                }
                 self.input.push(c);
                 self.history_index = None;
                 AppCommand::None
@@ -323,17 +466,12 @@ impl<T: Client> App<T> {
     }
 
     fn handle_enter(&mut self) -> AppCommand {
-        if self.status == AppStatus::WaitingForApproval {
-            // While waiting for approval, Enter sends an allow response.
-            let choice = if self.input.eq_ignore_ascii_case("n") {
-                "deny"
-            } else {
-                "allow"
-            };
-            self.input.clear();
-            self.history_index = None;
+        if let Some(ref req) = self.pending_approval {
+            // While waiting for approval, Enter defaults to approve.
+            let approved = !self.input.eq_ignore_ascii_case("n");
             return AppCommand::ApprovalRespond {
-                choice: choice.to_string(),
+                approval_id: req.approval_id.clone(),
+                approved,
             };
         }
 
@@ -344,13 +482,75 @@ impl<T: Client> App<T> {
         let text = self.input.clone();
         self.input.clear();
         self.history_index = None;
-        self.input_history.push(text.clone());
 
         if text.starts_with('/') {
-            AppCommand::SlashExec { command: text }
+            self.dispatch_slash_command(&text)
         } else {
+            self.input_history.push(text.clone());
             AppCommand::SendPrompt { text }
         }
+    }
+
+    fn dispatch_slash_command(&mut self, command: &str) -> AppCommand {
+        let parts: Vec<&str> = command.split_whitespace().collect();
+        if parts.is_empty() {
+            return AppCommand::None;
+        }
+
+        match parts[0] {
+            "/help" => {
+                self.show_help();
+                AppCommand::None
+            }
+            "/clear" => {
+                self.messages.clear();
+                AppCommand::None
+            }
+            "/status" => {
+                self.show_status();
+                AppCommand::None
+            }
+            "/sessions" => AppCommand::SendSessionList,
+            "/model" => {
+                if parts.len() < 2 {
+                    self.add_system_message("Usage: /model <name>");
+                    return AppCommand::None;
+                }
+                let model = parts[1].to_string();
+                self.model = model.clone();
+                AppCommand::SendSessionConfig { model }
+            }
+            _ => {
+                self.add_system_message(&format!("Unknown command: {}", command));
+                AppCommand::None
+            }
+        }
+    }
+
+    fn show_help(&mut self) {
+        self.add_system_message(
+            "Available commands:\n\
+             /help     - show this help\n\
+             /sessions - list active sessions\n\
+             /clear    - clear message history\n\
+             /model <name> - switch model\n\
+             /status   - show session status",
+        );
+    }
+
+    fn show_status(&mut self) {
+        let session = self.session_id.as_deref().unwrap_or("none");
+        self.add_system_message(&format!(
+            "Status: {} | Session: {} | Model: {} | Provider: {}",
+            self.status.as_str(),
+            session,
+            self.model,
+            self.provider
+        ));
+    }
+
+    fn is_input_blocked(&self) -> bool {
+        self.status == AppStatus::WaitingForApproval
     }
 
     fn cycle_history(&mut self, delta: i8) {
@@ -481,17 +681,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn slash_command_routes_to_slash_exec() {
+    async fn slash_command_help_sessions_and_model() {
         let mut app = app();
         app.status = AppStatus::Connected;
+
         app.input = "/help".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(cmd, AppCommand::None);
+        assert!(app
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("Available commands"));
+
+        app.input = "/sessions".to_string();
+        let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_eq!(cmd, AppCommand::SendSessionList);
+
+        app.input = "/model gpt-5".to_string();
         let cmd = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
         assert_eq!(
             cmd,
-            AppCommand::SlashExec {
-                command: "/help".to_string()
+            AppCommand::SendSessionConfig {
+                model: "gpt-5".to_string()
             }
         );
+        assert_eq!(app.model, "gpt-5");
     }
 
     #[tokio::test]
