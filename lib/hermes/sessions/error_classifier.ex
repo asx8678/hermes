@@ -45,6 +45,7 @@ defmodule Hermes.Sessions.ErrorClassifier do
   @reason_format_error :format_error
   @reason_thinking_signature :thinking_signature
   @reason_unknown :unknown
+  @reason_test_setup :test_setup
 
   # ── Message pattern lists ─────────────────────────────────────────────────
 
@@ -239,6 +240,20 @@ defmodule Hermes.Sessions.ErrorClassifier do
   `:reason`, `:retryable`, `:should_compress`, and `:message`.
   """
   @spec classify(term()) :: classified()
+  def classify(%DBConnection.OwnershipError{} = e),
+    do: result(@reason_test_setup, retryable: false, message: Exception.message(e))
+
+  def classify(%DBConnection.ConnectionError{} = e),
+    do: result(@reason_test_setup, retryable: false, message: Exception.message(e))
+
+  def classify(:empty),
+    do: result(@reason_unknown, retryable: false, message: "empty response")
+
+  def classify({:exit, {:noproc, _}}), do: classify(:noproc)
+
+  def classify(:noproc),
+    do: result(@reason_unknown, retryable: false, message: "target process not alive")
+
   def classify(reason) do
     {status, error_msg, body} = extract(reason)
     error_code = extract_error_code(body)

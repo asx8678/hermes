@@ -7,7 +7,7 @@ defmodule Hermes.Gateway.Connectors.TelegramTest do
   Bot API calls are mocked through `Hermes.Test.MockTelegramBot`.
   """
 
-  use ExUnit.Case, async: false
+  use Hermes.DataCase, async: false
 
   alias Hermes.Gateway
   alias Hermes.Gateway.Connectors.Telegram
