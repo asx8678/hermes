@@ -36,6 +36,7 @@ hermes-*.tar
 # Rust build artifacts
 /host/target/
 /host/embedded/
+/host/dist/
 # Elixir release
 /_build/
 /rel/

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use rand::RngCore;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -109,8 +110,8 @@ impl BeamProcess {
         let release_node = format!("hermes-{}", random_hex(6));
         let release_cookie = random_hex(16);
 
-        let child = Command::new(&bin)
-            .arg("start")
+        let mut cmd = Command::new(&bin);
+        cmd.arg("start")
             .current_dir(&release_root)
             .env("PHX_SERVER", "true")
             .env("PORT", port.to_string())
@@ -118,7 +119,20 @@ impl BeamProcess {
             .env("DATABASE_PATH", &db_path)
             .env("RELEASE_NODE", &release_node)
             .env("RELEASE_COOKIE", &release_cookie)
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+
+        // In a packaged desktop release the sidecar binary ships next to the host.
+        // Expose its path so Elixir sidecar supervisors can find it.
+        if let Some(sidecar) = env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.to_path_buf()))
+            .map(|dir| dir.join("hermes-sidecar"))
+            .filter(|p| p.exists())
+        {
+            cmd.env("HERMES_SIDECAR_PATH", sidecar);
+        }
+
+        let child = cmd
             .spawn()
             .with_context(|| format!("spawning BEAM from {}", bin.display()))?;
 

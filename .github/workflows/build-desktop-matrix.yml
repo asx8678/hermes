@@ -1,0 +1,77 @@
+name: Build Desktop Binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: hermes-darwin-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: hermes-darwin-x64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            artifact: hermes-linux-x64
+          - os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: hermes-linux-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Erlang/Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: '1.20'
+          otp-version: '29'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Fetch Mix dependencies
+        run: mix deps.get
+
+      - name: Install zstd
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install zstd
+          else
+            sudo apt-get update
+            sudo apt-get install -y zstd
+          fi
+
+      - name: Build Elixir release
+        run: MIX_ENV=prod mix release --overwrite
+
+      - name: Embed release
+        run: bash host/scripts/build-release.sh
+
+      - name: Build Rust host binary
+        run: cargo build --release --manifest-path host/Cargo.toml --target ${{ matrix.target }}
+
+      - name: Package (and sign on macOS)
+        env:
+          SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+        run: bash host/scripts/package-release.sh ${{ matrix.target }} ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: host/dist/${{ matrix.artifact }}.tar.zst
+          if-no-files-found: error
