@@ -33,3 +33,9 @@ hermes-*.tar
 .dolt/
 *.db
 .beads-credential-key
+# Rust build artifacts
+/host/target/
+/host/embedded/
+# Elixir release
+/_build/
+/rel/
