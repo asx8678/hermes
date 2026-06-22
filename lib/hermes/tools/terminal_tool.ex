@@ -28,14 +28,12 @@ defmodule Hermes.Tools.TerminalTool do
   Executes a shell command and returns a JSON-encodable result.
   """
   @spec invoke(map()) :: map()
-  def invoke(%{"command" => command} = args) when is_binary(command) do
+  def invoke(%{"command" => command}) when is_binary(command) do
     if String.trim(command) == "" do
       %{"success" => false, "error" => "command is empty"}
     else
       {output, exit_code} =
-        System.cmd("sh", ["-c", command],
-          stderr_to_stdout: true
-        )
+        System.cmd("sh", ["-c", command], stderr_to_stdout: true)
 
       %{
         "success" => exit_code == 0,
@@ -49,18 +47,6 @@ defmodule Hermes.Tools.TerminalTool do
   def invoke(_args) do
     %{"success" => false, "error" => "command is required"}
   end
-
-  defp int_or(nil, default), do: default
-  defp int_or(value, _default) when is_integer(value), do: value
-
-  defp int_or(value, _default) when is_binary(value) do
-    case Integer.parse(value) do
-      {n, ""} -> n
-      _ -> 0
-    end
-  end
-
-  defp int_or(_, default), do: default
 
   defp always_available, do: true
 

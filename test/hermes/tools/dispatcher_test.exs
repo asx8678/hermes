@@ -88,7 +88,9 @@ defmodule Hermes.Tools.DispatcherTest do
 
   describe "FileTools" do
     setup do
-      tmp_dir = Path.join(System.tmp_dir!(), "hermes_file_test_#{System.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "hermes_file_test_#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(tmp_dir)
       on_exit(fn -> File.rm_rf!(tmp_dir) end)
       %{tmp_dir: tmp_dir}
@@ -197,7 +199,9 @@ defmodule Hermes.Tools.DispatcherTest do
 
   describe "SkillTools" do
     setup do
-      tmp_dir = Path.join(System.tmp_dir!(), "hermes_skills_test_#{System.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "hermes_skills_test_#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(tmp_dir)
       previous = Application.get_env(:hermes, :skills_dir)
       Application.put_env(:hermes, :skills_dir, tmp_dir)

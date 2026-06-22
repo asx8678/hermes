@@ -4,6 +4,10 @@ defmodule Hermes.Tools.Dispatcher do
 
   Ported from the Python source `agent/agent_runtime_helpers.py:1733`.
 
+  Implements the irreducible-6 core tool families described in
+  `02-core-tools.md`: terminal, file I/O, execute_code, skills,
+  memory/session_search, and delegate_task.
+
   The dispatcher is the single entry point used by the turn loop (A2).
   It receives a tool name, decoded JSON arguments, and a context map, and
   always returns a JSON-encoded result string.
@@ -98,7 +102,6 @@ defmodule Hermes.Tools.Dispatcher do
 
   defp call_handler(handler, args, _context) when is_function(handler, 1),
     do: handler.(args)
-
 
   defp call_handler(_handler, args, _context),
     do: %{"error" => "invalid handler for args: #{inspect(args)}"}

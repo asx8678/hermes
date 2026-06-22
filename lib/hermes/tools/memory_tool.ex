@@ -183,7 +183,7 @@ defmodule Hermes.Tools.MemoryTool do
     |> where([sm], like(sm.key, ^"#{target}:%"))
     |> select([sm], %{key: sm.key, value: sm.value})
     |> repo.all()
-    |> Enum.map(&Map.take(&1, [:key, :value]))
+    |> Enum.map(fn %{key: k, value: v} -> %{"key" => k, "value" => v} end)
   end
 
   defp find_first_matching(target, substring, repo) do

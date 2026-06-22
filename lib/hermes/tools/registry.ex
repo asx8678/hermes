@@ -109,7 +109,9 @@ defmodule Hermes.Tools.Registry do
     :ok
   end
 
-  defp _register_from_entry(%{name: name, toolset: toolset, schema: schema, handler: handler} = entry) do
+  defp _register_from_entry(
+         %{name: name, toolset: toolset, schema: schema, handler: handler} = entry
+       ) do
     check_fn = Map.get(entry, :check_fn)
 
     Agent.update(@name, fn state ->

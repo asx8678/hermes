@@ -7,7 +7,6 @@ defmodule Hermes.Tools.SkillTools do
   configured by `:hermes, :skills_dir`).
   """
 
-
   @doc """
   Returns the tool entries for registration.
   """
@@ -446,8 +445,14 @@ defmodule Hermes.Tools.SkillTools do
           content: %{type: "string", description: "Full SKILL.md content (create/edit)."},
           old_string: %{type: "string", description: "Text to find (patch)."},
           new_string: %{type: "string", description: "Replacement text (patch)."},
-          file_path: %{type: "string", description: "Supporting file path (write_file/remove_file)."},
-          file_content: %{type: "string", description: "Content for supporting file (write_file)."}
+          file_path: %{
+            type: "string",
+            description: "Supporting file path (write_file/remove_file)."
+          },
+          file_content: %{
+            type: "string",
+            description: "Content for supporting file (write_file)."
+          }
         },
         required: ["action", "name"]
       }
