@@ -3,6 +3,13 @@ name = "hermes-host"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "hermes-host"
+path = "src/main.rs"
+
+[[bin]]
+name = "hermes-sidecar"
+path = "src/bin/sidecar.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -25,3 +32,4 @@ textwrap = "0.16"
 unicode-width = "0.1"
 futures-util = "0.3"
 parking_lot = "0.12"
+libc = "0.2"

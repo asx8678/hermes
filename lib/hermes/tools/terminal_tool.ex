@@ -1,10 +1,12 @@
 defmodule Hermes.Tools.TerminalTool do
   @moduledoc """
-  Minimal terminal tool: shells out via `System.cmd/3`.
+  Terminal tool backed by an OS-isolated Rust sidecar.
 
-  This is the Milestone A stand-in for the full sidecar terminal backend
-  planned for Milestone D. Port of `tools/terminal_tool.py:2738`.
+  Commands run in a separate OS process via `Hermes.Tools.TerminalSidecar`,
+  so a crash or hang cannot affect the BEAM. Port of `tools/terminal_tool.py:2738`.
   """
+
+  alias Hermes.Tools.TerminalSidecar
 
   @default_timeout 60
 
@@ -25,22 +27,15 @@ defmodule Hermes.Tools.TerminalTool do
   end
 
   @doc """
-  Executes a shell command and returns a JSON-encodable result.
+  Executes a shell command through the sidecar and returns a JSON-encodable result.
   """
   @spec invoke(map()) :: map()
-  def invoke(%{"command" => command}) when is_binary(command) do
+  def invoke(%{"command" => command} = args) when is_binary(command) do
     if String.trim(command) == "" do
       %{"success" => false, "error" => "command is empty"}
     else
-      {output, exit_code} =
-        System.cmd("sh", ["-c", command], stderr_to_stdout: true)
-
-      %{
-        "success" => exit_code == 0,
-        "stdout" => output,
-        "stderr" => "",
-        "exit_code" => exit_code
-      }
+      timeout = get_timeout(args)
+      execute(command, timeout: timeout)
     end
   end
 
@@ -48,7 +43,29 @@ defmodule Hermes.Tools.TerminalTool do
     %{"success" => false, "error" => "command is required"}
   end
 
+  @doc """
+  Execute a shell command via the terminal sidecar.
+
+  ## Options
+
+    * `:timeout` - maximum seconds to wait for the command (default #{@default_timeout})
+    * `:cwd` - working directory for the command
+  """
+  @spec execute(String.t(), keyword()) :: map()
+  def execute(command, opts \\ []) when is_binary(command) do
+    TerminalSidecar.execute(command, opts)
+  end
+
   defp always_available, do: true
+
+  # The original Python tool permitted an optional `timeout` key in the args
+  # map (in addition to the schema default). Keep that behaviour.
+  defp get_timeout(args) when is_map(args) do
+    case Map.get(args, "timeout") do
+      n when is_integer(n) and n > 0 -> n
+      _ -> @default_timeout
+    end
+  end
 
   defp terminal_schema do
     %{

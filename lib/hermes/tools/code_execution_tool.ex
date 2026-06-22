@@ -1,10 +1,13 @@
 defmodule Hermes.Tools.CodeExecutionTool do
   @moduledoc """
-  Minimal code execution tool: runs code in a subprocess.
+  Code execution tool backed by an OS-isolated Rust sidecar.
 
-  This is the Milestone A stand-in for the sandboxed execution sidecar
-  planned for Milestone D. Port of `tools/code_execution_tool.py:1837`.
+  Code runs in a separate OS process via `Hermes.Tools.CodeExecutionSidecar`,
+  so a crash or runaway script cannot affect the BEAM. Port of
+  `tools/code_execution_tool.py:1837`.
   """
+
+  alias Hermes.Tools.CodeExecutionSidecar
 
   @default_timeout 30
 
@@ -25,7 +28,7 @@ defmodule Hermes.Tools.CodeExecutionTool do
   end
 
   @doc """
-  Runs code in a subprocess and returns stdout/stderr/exit_code.
+  Runs code through the sidecar and returns stdout/stderr/exit_code.
   """
   @spec invoke(map()) :: map()
   def invoke(%{"code" => code} = args) when is_binary(code) do
@@ -33,11 +36,11 @@ defmodule Hermes.Tools.CodeExecutionTool do
       %{"success" => false, "error" => "code is empty"}
     else
       language = String.downcase(Map.get(args, "language", "elixir"))
-      timeout_ms = int_or(Map.get(args, "timeout"), @default_timeout) * 1000
+      timeout = int_or(Map.get(args, "timeout"), @default_timeout)
 
       case language do
-        "elixir" -> run_elixir(code, timeout_ms)
-        "python" -> run_python(code, timeout_ms)
+        "elixir" -> run_elixir(code, timeout)
+        "python" -> run_python(code, timeout)
         other -> %{"success" => false, "error" => "unsupported language: #{other}"}
       end
     end
@@ -47,46 +50,28 @@ defmodule Hermes.Tools.CodeExecutionTool do
     %{"success" => false, "error" => "code is required"}
   end
 
-  defp run_elixir(code, _timeout_ms) do
-    unique = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
-    path = Path.join(System.tmp_dir!(), "hermes_exec_#{unique}.exs")
+  @doc """
+  Execute Python code with a mock `hermes_tools` module.
 
-    try do
-      File.write!(path, code)
+  Only useful for tests; the LLM-facing `invoke/1` does not expose this mode.
+  """
+  @spec execute_with_tools(String.t(), [String.t()], keyword()) :: map()
+  def execute_with_tools(code, allowed_tools, opts \\ []) when is_binary(code) do
+    timeout = Keyword.get(opts, :timeout, @default_timeout)
 
-      {output, exit_code} =
-        System.cmd("elixir", [path], stderr_to_stdout: true)
-
-      %{
-        "success" => exit_code == 0,
-        "stdout" => output,
-        "stderr" => "",
-        "exit_code" => exit_code
-      }
-    after
-      File.rm(path)
-    end
+    CodeExecutionSidecar.execute(code,
+      language: "python",
+      timeout: timeout,
+      allowed_tools: allowed_tools
+    )
   end
 
-  defp run_python(code, _timeout_ms) do
-    unique = :crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)
-    path = Path.join(System.tmp_dir!(), "hermes_exec_#{unique}.py")
+  defp run_elixir(code, timeout) do
+    CodeExecutionSidecar.execute(code, language: "elixir", timeout: timeout)
+  end
 
-    try do
-      File.write!(path, code)
-
-      {output, exit_code} =
-        System.cmd("python3", [path], stderr_to_stdout: true)
-
-      %{
-        "success" => exit_code == 0,
-        "stdout" => output,
-        "stderr" => "",
-        "exit_code" => exit_code
-      }
-    after
-      File.rm(path)
-    end
+  defp run_python(code, timeout) do
+    CodeExecutionSidecar.execute(code, language: "python", timeout: timeout)
   end
 
   defp int_or(nil, default), do: default

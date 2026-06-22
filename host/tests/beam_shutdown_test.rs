@@ -283,7 +283,10 @@ async fn sigint_triggers_graceful_shutdown() {
     // If we captured the wrong PID or the process tree is complex, just log it.
     if let Some(beam_pid) = beam_pid {
         if process_alive(beam_pid) {
-            eprintln!("Warning: BEAM child {} still alive after SIGINT (may be a grandchild)", beam_pid);
+            eprintln!(
+                "Warning: BEAM child {} still alive after SIGINT (may be a grandchild)",
+                beam_pid
+            );
         }
     }
     assert!(
