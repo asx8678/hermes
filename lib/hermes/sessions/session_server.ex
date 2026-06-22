@@ -176,9 +176,25 @@ defmodule Hermes.Sessions.SessionServer do
 
     case TurnLoop.run(opts) do
       {:ok, result} ->
+        Hermes.Curator.BackgroundReview.spawn_review(
+          state.session_id,
+          result.messages,
+          provider: provider_module(state.provider),
+          model: state.model,
+          api_mode: state.api_mode
+        )
+
         GenServer.cast(session_pid, {:turn_finished, %{ok: true, result: result}})
 
       {:error, error} ->
+        Hermes.Curator.BackgroundReview.spawn_review(
+          state.session_id,
+          error.messages,
+          provider: provider_module(state.provider),
+          model: state.model,
+          api_mode: state.api_mode
+        )
+
         GenServer.cast(session_pid, {:turn_finished, %{ok: false, error: error}})
     end
   end

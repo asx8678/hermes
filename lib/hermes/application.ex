@@ -8,8 +8,8 @@ defmodule Hermes.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      HermesWeb.Telemetry,
       Hermes.Repo,
+      {Oban, Application.fetch_env!(:hermes, Oban)},
       {Ecto.Migrator,
        repos: Application.fetch_env!(:hermes, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:hermes, :dns_cluster_query) || :ignore},
