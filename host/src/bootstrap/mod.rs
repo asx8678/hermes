@@ -140,9 +140,23 @@ fn report(active: ActiveRuntime, notes: Vec<String>, launch: Option<SystemLaunch
 /// (`mix setup`), returning a launch spec. A missing source tree (packaged
 /// binary) or a failed prepare is non-fatal: the host uses the embedded release.
 async fn prepare_launch(mise: Option<&Mise>, notes: &mut Vec<String>) -> Option<SystemLaunch> {
-    let Some(app_src) = system::find_app_source() else {
-        notes.push("no source checkout found; using the bundled release".to_string());
-        return None;
+    // If no source checkout is found, extract the embedded app source to
+    // ~/.hermes/app-src/<version>/ so the system runtime can run `mix phx.server`.
+    let app_src = match system::find_app_source() {
+        Some(src) => src,
+        None => {
+            notes.push("extracting embedded app source for system-runtime launch".to_string());
+            let cache_root = hermes_home().join("app-src");
+            match crate::app_source::extract(&cache_root).await {
+                Ok(dir) => dir,
+                Err(e) => {
+                    notes.push(format!(
+                        "app source extraction failed ({e:#}); using the bundled release"
+                    ));
+                    return None;
+                }
+            }
+        }
     };
     notes.push(format!("fetching Hex deps from {}", app_src.display()));
     match system::prepare_source(mise, &app_src).await {

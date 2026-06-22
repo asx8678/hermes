@@ -1,4 +1,5 @@
 pub mod app;
+pub mod app_source;
 pub mod beam;
 pub mod bootstrap;
 pub mod cli;

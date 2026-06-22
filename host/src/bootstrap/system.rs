@@ -53,7 +53,24 @@ pub fn find_app_source() -> Option<PathBuf> {
             cur = dir.parent();
         }
     }
+
+    // 4. Extracted embedded app source cache (~/.hermes/app-src/<version>/).
+    if let Some(cache_dir) = extracted_app_source() {
+        return Some(cache_dir);
+    }
     None
+}
+
+/// Check the extracted embedded app source cache dir.
+fn extracted_app_source() -> Option<PathBuf> {
+    let home = super::hermes_home();
+    let cache_dir = home.join("app-src").join(crate::app_source::SOURCE_VERSION);
+    let marker = cache_dir.join(".hermes-app-source-extracted");
+    if marker.exists() && cache_dir.join("mix.exs").exists() {
+        Some(cache_dir)
+    } else {
+        None
+    }
 }
 
 /// True when `dir/mix.exs` exists and names the `:hermes` app.
