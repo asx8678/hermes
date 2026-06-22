@@ -192,6 +192,7 @@ defmodule Hermes.Sessions.SessionServer do
       "session:#{session_id}",
       {:turn_complete,
        %{
+         session_id: session_id,
          final_response: result.final_response,
          api_calls: result.api_calls,
          completed: true
@@ -203,7 +204,12 @@ defmodule Hermes.Sessions.SessionServer do
     Phoenix.PubSub.broadcast(
       Hermes.PubSub,
       "session:#{session_id}",
-      {:turn_error, %{error: message, partial: partial}}
+      {:turn_error,
+       %{
+         session_id: session_id,
+         error: message,
+         partial: partial
+       }}
     )
   end
 
@@ -211,7 +217,12 @@ defmodule Hermes.Sessions.SessionServer do
     Phoenix.PubSub.broadcast(
       Hermes.PubSub,
       "session:#{session_id}",
-      {:turn_error, %{error: error, partial: partial}}
+      {:turn_error,
+       %{
+         session_id: session_id,
+         error: error,
+         partial: partial
+       }}
     )
   end
 

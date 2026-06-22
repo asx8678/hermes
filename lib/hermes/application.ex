@@ -26,7 +26,13 @@ defmodule Hermes.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Hermes.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    with {:ok, sup_pid} <- Supervisor.start_link(children, opts) do
+      # Register built-in connectors. The Telegram connector requires
+      # TELEGRAM_BOT_TOKEN to be set before it can be started.
+      _ = Hermes.Gateway.Registry.register(telegram_connector_entry())
+      {:ok, sup_pid}
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
@@ -40,5 +46,15 @@ defmodule Hermes.Application do
   defp skip_migrations?() do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  defp telegram_connector_entry do
+    %{
+      name: :telegram,
+      label: "Telegram",
+      module: Hermes.Gateway.Connectors.Telegram,
+      check_fn: fn -> System.get_env("TELEGRAM_BOT_TOKEN") != nil end,
+      required_env: ["TELEGRAM_BOT_TOKEN"]
+    }
   end
 end
