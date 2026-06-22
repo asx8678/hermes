@@ -12,6 +12,7 @@ defmodule Hermes.Tools.MemoryTool do
   import Ecto.Query
 
   alias Hermes.Repo
+  alias Hermes.Sessions.Search
   alias Hermes.Sessions.StateMeta
 
   @type context :: %{repo: module()} | %{}
@@ -91,11 +92,7 @@ defmodule Hermes.Tools.MemoryTool do
 
     entries =
       if is_binary(content_filter) and String.trim(content_filter) != "" do
-        target
-        |> list_entries(repo)
-        |> Enum.filter(fn entry ->
-          String.contains?(entry["value"], content_filter)
-        end)
+        search_entries(target, content_filter, repo)
       else
         list_entries(target, repo)
       end
@@ -139,20 +136,20 @@ defmodule Hermes.Tools.MemoryTool do
 
   defp apply_op(%{"action" => "delete"} = op, target, repo) do
     old_text = Map.get(op, "old_text")
+    prefix = "#{target}:%"
 
-    query =
-      from(sm in StateMeta,
-        where: like(sm.key, ^"#{target}:%")
-      )
-
-    query =
+    count =
       if is_binary(old_text) and String.trim(old_text) != "" do
-        from(sm in query, where: like(sm.value, ^"%#{old_text}%"))
-      else
-        query
-      end
+        case Search.sanitize_fts5_query(old_text) do
+          "" ->
+            delete_all_by_prefix(prefix, repo)
 
-    {count, _} = repo.delete_all(query)
+          sanitized ->
+            delete_matching(prefix, sanitized, repo)
+        end
+      else
+        delete_all_by_prefix(prefix, repo)
+      end
 
     %{"success" => true, "action" => "delete", "deleted" => count}
   end
@@ -187,12 +184,75 @@ defmodule Hermes.Tools.MemoryTool do
   end
 
   defp find_first_matching(target, substring, repo) do
-    StateMeta
-    |> where([sm], like(sm.key, ^"#{target}:%"))
-    |> where([sm], like(sm.value, ^"%#{substring}%"))
-    |> select([sm], sm)
-    |> limit(1)
-    |> repo.one()
+    prefix = "#{target}:%"
+    query = Search.sanitize_fts5_query(substring)
+
+    if query == "" do
+      nil
+    else
+      sql = """
+      SELECT sm.key
+      FROM state_meta AS sm
+      JOIN state_meta_fts ON state_meta_fts.rowid = sm.rowid
+      WHERE state_meta_fts MATCH ? AND sm.key LIKE ?
+      LIMIT 1
+      """
+
+      case repo.query(sql, [query, prefix]) do
+        {:ok, %{rows: [[key] | _]}} -> repo.get(StateMeta, key)
+        _ -> nil
+      end
+    end
+  end
+
+  defp search_entries(target, query, repo) do
+    prefix = "#{target}:%"
+    query = Search.sanitize_fts5_query(query)
+
+    if query == "" do
+      list_entries(target, repo)
+    else
+      sql = """
+      SELECT sm.key, sm.value
+      FROM state_meta AS sm
+      JOIN state_meta_fts ON state_meta_fts.rowid = sm.rowid
+      WHERE state_meta_fts MATCH ? AND sm.key LIKE ?
+      """
+
+      case repo.query(sql, [query, prefix]) do
+        {:ok, %{rows: rows}} ->
+          Enum.map(rows, fn [k, v] -> %{"key" => k, "value" => v} end)
+
+        {:error, _} ->
+          []
+      end
+    end
+  end
+
+  defp delete_all_by_prefix(prefix, repo) do
+    {count, _} =
+      StateMeta
+      |> where([sm], like(sm.key, ^prefix))
+      |> repo.delete_all()
+
+    count
+  end
+
+  defp delete_matching(prefix, fts_query, repo) do
+    sql = """
+    DELETE FROM state_meta
+    WHERE rowid IN (
+      SELECT state_meta_fts.rowid
+      FROM state_meta_fts
+      JOIN state_meta AS sm ON sm.rowid = state_meta_fts.rowid
+      WHERE state_meta_fts MATCH ? AND sm.key LIKE ?
+    )
+    """
+
+    case repo.query(sql, [fts_query, prefix]) do
+      {:ok, %{num_rows: count}} -> count
+      {:error, _} -> 0
+    end
   end
 
   defp always_available, do: true

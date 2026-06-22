@@ -42,7 +42,10 @@ defmodule Hermes.Tools.DelegateTool do
         model: Map.get(args, "model", @default_model),
         provider: normalize_provider(Map.get(args, "provider", "anthropic")),
         system_prompt: Map.get(args, "context", ""),
-        parent_session_id: parent_session_id
+        parent_session_id: parent_session_id,
+        base_url: Map.get(context, :base_url),
+        api_key: Map.get(context, :api_key),
+        context_window: Map.get(context, :context_window)
       ]
 
       opts = Keyword.reject(opts, fn {_k, v} -> is_nil(v) end)

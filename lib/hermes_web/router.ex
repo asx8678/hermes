@@ -15,9 +15,12 @@ defmodule HermesWeb.Router do
     pipe_through :browser
 
     live "/dashboard", SessionLive.Index
+    live "/sessions/:id", SessionLive.Show
   end
 
   scope "/api", HermesWeb do
     pipe_through :api
   end
+
+  forward "/webhooks", Hermes.Gateway.Webhook
 end

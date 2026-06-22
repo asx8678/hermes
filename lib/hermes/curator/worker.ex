@@ -53,9 +53,10 @@ defmodule Hermes.Curator.Worker do
   end
 
   defp run_consolidation do
-    # LLM consolidation is intentionally off by default (#curator-llm).
-    # A future implementation can fork a mini-agent here.
-    Logger.debug("Curator LLM consolidation skipped (disabled by default)")
-    :ok
+    cfg = Application.get_env(:hermes, :curator, [])
+    provider = Keyword.get(cfg, :provider, Hermes.Providers.Anthropic)
+    model = Keyword.get(cfg, :model, "claude-sonnet-4-20250514")
+
+    Hermes.Curator.Consolidation.run(provider: provider, model: model)
   end
 end

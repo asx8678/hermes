@@ -66,4 +66,14 @@ defmodule HermesWeb.SessionLiveTest do
     assert html =~ session_id
     assert html =~ "test-model"
   end
+
+  test "show view renders message history and prompt input for a live session", %{conn: conn} do
+    {:ok, pid, session_id} = Hermes.Sessions.start_session(model: "test-model")
+    on_exit(fn -> Hermes.Sessions.stop_session(pid) end)
+
+    {:ok, _view, html} = live(conn, "/sessions/#{session_id}")
+
+    assert html =~ session_id
+    assert html =~ "Prompt"
+  end
 end

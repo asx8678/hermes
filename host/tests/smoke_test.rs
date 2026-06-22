@@ -122,7 +122,8 @@ async fn binary_boots_and_runs_one_turn() {
 
     // Wait for the turn to complete. The mock provider returns immediately,
     // so 10 seconds is generous.
-    let turn = recv_non_heartbeat(&mut client, Duration::from_secs(10))
+    // Wait for the turn to complete, skipping streaming deltas that may arrive first.
+    let turn = recv_turn_complete(&mut client, Duration::from_secs(10))
         .await
         .expect("turn:complete event");
     assert_eq!(turn.topic, "session:new");
@@ -193,6 +194,26 @@ async fn recv_non_heartbeat(
         .await
         .map_err(|_| anyhow::anyhow!("timed out waiting for message"))?
 }
+
+async fn recv_turn_complete(
+    client: &mut ChannelsClient,
+    deadline: Duration,
+) -> anyhow::Result<hermes_host::ws_client::Message> {
+    let start = std::time::Instant::now();
+    loop {
+        let remaining = deadline.saturating_sub(start.elapsed());
+        let msg = recv_non_heartbeat(client, remaining).await?;
+        if msg.event == "turn:complete" {
+            return Ok(msg);
+        }
+        // Streaming deltas are emitted before the final turn:complete; ignore them.
+        if msg.event == "stream:delta" {
+            continue;
+        }
+        anyhow::bail!("expected turn:complete or stream:delta, got {}", msg.event);
+    }
+}
+
 
 #[cfg(unix)]
 fn process_alive(pid: u32) -> bool {

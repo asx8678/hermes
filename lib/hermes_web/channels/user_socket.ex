@@ -13,8 +13,35 @@ defmodule HermesWeb.UserSocket do
   channel "session:*", HermesWeb.SessionChannel
 
   @impl true
-  def connect(_params, socket, _connect_info) do
-    {:ok, socket}
+  def connect(params, socket, _connect_info) do
+    case fetch_auth_token() do
+      nil ->
+        # No token configured — localhost boundary, allow all (Milestone A compat)
+        {:ok, socket}
+
+      expected_token ->
+        case params["token"] || params["Authorization"] do
+          nil ->
+            {:error, :missing_token}
+
+          token when is_binary(token) ->
+            token = String.replace_prefix(token, "Bearer ", "")
+
+            if String.equivalent?(token, expected_token) do
+              {:ok, socket}
+            else
+              {:error, :unauthorized}
+            end
+
+          _ ->
+            {:error, :unauthorized}
+        end
+    end
+  end
+
+  defp fetch_auth_token do
+    Application.get_env(:hermes, :channel_auth_token) ||
+      System.get_env("HERMES_CHANNEL_TOKEN")
   end
 
   @impl true

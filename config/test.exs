@@ -30,6 +30,6 @@ config :phoenix,
 config :hermes, Oban,
   engine: Oban.Engines.Lite,
   repo: Hermes.Repo,
-  queues: [default: 10],
+  queues: [default: 10, cron: 10],
   plugins: [],
   testing: :manual

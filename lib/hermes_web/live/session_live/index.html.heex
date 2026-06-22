@@ -1,17 +1,24 @@
 <h1>Hermes Sessions</h1>
+
+<button phx-click="new_session">New Session</button>
+
 <table>
   <tr>
     <th>Session ID</th>
+    <th>Provider</th>
     <th>Model</th>
     <th>Status</th>
     <th>Messages</th>
+    <th></th>
   </tr>
   <%= for session <- @sessions do %>
     <tr>
       <td><%= session.id %></td>
+      <td><%= session.provider %></td>
       <td><%= session.model %></td>
       <td><%= session.status %></td>
       <td><%= session.message_count %></td>
+      <td><a href={~p"/sessions/#{session.id}"}>Connect</a></td>
     </tr>
   <% end %>
 </table>

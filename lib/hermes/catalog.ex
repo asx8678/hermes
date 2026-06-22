@@ -185,6 +185,7 @@ defmodule Hermes.Catalog do
     raw =
       case safe_get(Provider, name) do
         %Provider{} = p ->
+          p = Provider.load(p)
           %{kind: p.kind, base_url: p.base_url, api_key: p.api_key, api_key_env: p.api_key_env}
 
         nil ->

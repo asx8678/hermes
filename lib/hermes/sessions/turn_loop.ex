@@ -19,6 +19,8 @@ defmodule Hermes.Sessions.TurnLoop do
     the turn for the user's next message).
   - Outer-loop error handling that fills missing tool results and breaks
     near `max_iterations`.
+  - API-error classification (`Hermes.Sessions.ErrorClassifier`) with
+    retry/backoff and context-compression recovery.
 
   ## Still simplified
 
@@ -323,7 +325,10 @@ defmodule Hermes.Sessions.TurnLoop do
       session_id: state.session_id,
       session_pid: state.session_pid,
       finch_name: state.finch_name,
-      repo: Hermes.Repo
+      repo: Hermes.Repo,
+      base_url: state.base_url,
+      api_key: state.api_key,
+      context_window: state.context_window
     }
 
     tool_results =
@@ -422,8 +427,27 @@ defmodule Hermes.Sessions.TurnLoop do
   # ---------------------------------------------------------------------------
 
   defp handle_provider_error(state, reason) do
-    message = "Error during API call #{state.api_call_count}: #{inspect(reason)}"
-    handle_outer_error(state, message)
+    classified = Hermes.Sessions.ErrorClassifier.classify(reason)
+
+    Logger.warning(
+      "TurnLoop API error: reason=#{classified.reason} retryable=#{classified.retryable} " <>
+        "message=#{classified.message}"
+    )
+
+    if classified.retryable and state.api_call_count < state.max_iterations - 1 do
+      state =
+        if classified.should_compress do
+          Hermes.Sessions.Compaction.maybe_compress(state)
+        else
+          state
+        end
+
+      Process.sleep(backoff_ms(classified.reason))
+      loop(state)
+    else
+      message = "Error during API call #{state.api_call_count}: #{classified.message}"
+      handle_outer_error(state, message)
+    end
   end
 
   defp handle_outer_error(state, message) do
@@ -599,4 +623,13 @@ defmodule Hermes.Sessions.TurnLoop do
     |> String.replace(~r/<thinking>.*?<\/thinking>/s, "")
     |> String.replace(~r/<reasoning>.*?<\/reasoning>/s, "")
   end
+
+  # Backoff duration (ms) keyed by classified error reason.
+  defp backoff_ms(:rate_limit), do: 1_000
+  defp backoff_ms(:overloaded), do: 500
+  defp backoff_ms(:server_error), do: 100
+  defp backoff_ms(:timeout), do: 100
+  defp backoff_ms(:context_overflow), do: 100
+  defp backoff_ms(:unknown), do: 100
+  defp backoff_ms(_reason), do: 100
 end

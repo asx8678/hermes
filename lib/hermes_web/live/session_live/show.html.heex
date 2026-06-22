@@ -1,0 +1,65 @@
+<h1>Session <%= @session.id %></h1>
+
+<div class="session-meta">
+  <span>Provider: <%= @session.provider %></span>
+  <span>Model: <%= @session.model %></span>
+  <span>Status: <%= @session.status %></span>
+  <span>Messages: <%= @session.message_count %></span>
+</div>
+
+<div class="config-switcher">
+  <h3>Model / Provider</h3>
+  <form phx-change="provider_changed" phx-submit="set_config">
+    <label>
+      Provider
+      <select name="config[provider]">
+        <%= for provider <- @providers do %>
+          <option value={provider.name} selected={to_string(@session.provider) == provider.name}>
+            <%= provider.label %>
+          </option>
+        <% end %>
+      </select>
+    </label>
+
+    <label>
+      Model
+      <select name="config[model]">
+        <%= for model <- @models do %>
+          <option value={model.model_id} selected={@session.model == model.model_id}>
+            <%= model.label %>
+          </option>
+        <% end %>
+      </select>
+    </label>
+
+    <button type="submit">Apply</button>
+  </form>
+</div>
+
+<div class="chat-history" id="chat-history">
+  <%= for message <- @messages do %>
+    <div class={"message message-#{message.role}"}>
+      <div class="message-role"><%= message.role %></div>
+      <pre class="message-content"><%= message.content %></pre>
+    </div>
+  <% end %>
+
+  <%= if @streaming != nil do %>
+    <div class="message message-assistant streaming">
+      <div class="message-role">assistant</div>
+      <pre class="message-content"><%= @streaming %></pre>
+    </div>
+  <% end %>
+</div>
+
+<form phx-submit="send_prompt" phx-change="prompt_change">
+  <label>
+    Prompt
+    <input type="text" name="prompt[text]" value={@prompt} placeholder="Type a message..." />
+  </label>
+  <button type="submit" disabled={@session.status == :running}>Send</button>
+</form>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

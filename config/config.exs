@@ -9,7 +9,9 @@ import Config
 
 config :hermes,
   ecto_repos: [Hermes.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  channel_auth_token: System.get_env("HERMES_CHANNEL_TOKEN"),
+  catalog_encrypt_key: System.get_env("HERMES_CATALOG_ENCRYPT_KEY")
 
 config :hermes, Hermes.Native,
   crate: "hermes_native",
@@ -53,7 +55,7 @@ config :hermes, :openai_base_url, "https://inference.makora.com/v1"
 config :hermes, Oban,
   engine: Oban.Engines.Lite,
   repo: Hermes.Repo,
-  queues: [default: 10],
+  queues: [default: 10, cron: 10],
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [

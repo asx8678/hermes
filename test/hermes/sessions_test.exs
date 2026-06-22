@@ -76,6 +76,18 @@ defmodule Hermes.SessionsTest do
       assert Process.alive?(pid2)
       assert %{provider: :anthropic} = Sessions.get_session(pid2)
     end
+
+    test "crashing turn task returns session to idle" do
+      assert {:ok, pid, session_id} = Sessions.start_session(max_iterations: -1)
+      assert :ok = Sessions.run_turn_async(session_id, "hello")
+
+      # The invalid max_iterations causes IterationBudget.new(-1) to raise
+      # inside TurnLoop.run before its own try/catch. The wrapper around
+      # run_turn_in_task must cast :turn_finished with ok: false so the
+      # session transitions back to idle instead of staying stuck in :running.
+      assert wait_for_status(pid, :idle, 100)
+      assert Sessions.get_session(pid).status == :idle
+    end
   end
 
   describe "stop_session/1" do
@@ -87,6 +99,20 @@ defmodule Hermes.SessionsTest do
       refute Process.alive?(pid)
 
       assert {:error, :not_found} = Sessions.stop_session(pid)
+    end
+  end
+
+  # Wait up to `retries * 10ms` for the session to reach `status`.
+  defp wait_for_status(pid, status, retries) do
+    if Sessions.get_session(pid).status == status do
+      true
+    else
+      if retries > 0 do
+        Process.sleep(10)
+        wait_for_status(pid, status, retries - 1)
+      else
+        false
+      end
     end
   end
 end

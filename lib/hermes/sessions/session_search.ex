@@ -14,6 +14,44 @@ defmodule Hermes.Sessions.SessionSearch do
 
   alias Hermes.Sessions.Search
 
+  @type context :: %{session_id: String.t()} | %{}
+
+  @doc """
+  Returns the tool entries for registration.
+  """
+  @spec tool_entries() :: [map()]
+  def tool_entries do
+    [
+      %{
+        name: "session_search",
+        toolset: "memory",
+        schema: session_search_schema(),
+        handler: &invoke/2,
+        check_fn: &always_available/0
+      }
+    ]
+  end
+
+  @doc """
+  Invokes the session_search tool from the registry.
+  """
+  @spec invoke(map(), context()) :: map()
+  def invoke(args, context) do
+    opts = [
+      query: Map.get(args, "query"),
+      session_id: Map.get(args, "session_id"),
+      around_message_id: Map.get(args, "around_message_id"),
+      window: Map.get(args, "window"),
+      limit: Map.get(args, "limit"),
+      role_filter: Map.get(args, "role_filter"),
+      sort: Map.get(args, "sort"),
+      current_session_id: Map.get(context, :session_id)
+    ]
+
+    search(opts)
+  end
+
+  defp always_available, do: true
   @hidden_session_sources ["subagent", "tool"]
 
   @doc """
@@ -291,4 +329,53 @@ defmodule Hermes.Sessions.SessionSearch do
   end
 
   defp format_timestamp(ts), do: to_string(ts)
+
+  # ---------------------------------------------------------------------------
+  # Tool schema
+  # ---------------------------------------------------------------------------
+
+  defp session_search_schema do
+    %{
+      name: "session_search",
+      description: "Search across sessions and messages using FTS5, scroll within a session, or browse recent sessions.",
+      parameters: %{
+        type: "object",
+        properties: %{
+          query: %{
+            type: "string",
+            description: "FTS5 search query for discovery mode."
+          },
+          session_id: %{
+            type: "string",
+            description: "Target session id for scroll mode."
+          },
+          around_message_id: %{
+            type: "string",
+            description: "Anchor message id for scroll mode; requires session_id."
+          },
+          window: %{
+            type: "integer",
+            description: "Message window radius for scroll mode.",
+            default: 5
+          },
+          limit: %{
+            type: "integer",
+            description: "Maximum sessions to return for discovery or browse.",
+            default: 3
+          },
+          role_filter: %{
+            type: "string",
+            description: "Comma-separated roles to filter (e.g. \"user,assistant\")."
+          },
+          sort: %{
+            type: "string",
+            enum: ["newest", "oldest"],
+            description: "Sort order for discovery results.",
+            default: "newest"
+          }
+        },
+        required: []
+      }
+    }
+  end
 end

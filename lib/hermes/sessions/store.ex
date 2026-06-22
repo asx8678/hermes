@@ -69,6 +69,31 @@ defmodule Hermes.Sessions.Store do
   end
 
   @doc """
+  Lists persisted messages for a session, oldest first.
+  """
+  @spec list_messages(String.t()) :: [map()]
+  def list_messages(session_id) when is_binary(session_id) do
+    Repo.all(
+      from m in Message,
+        where: m.session_id == ^session_id and m.active == 1,
+        order_by: [asc: m.timestamp],
+        select: %{
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          tool_name: m.tool_name,
+          tool_call_id: m.tool_call_id,
+          tool_calls: m.tool_calls,
+          finish_reason: m.finish_reason,
+          reasoning: m.reasoning,
+          timestamp: m.timestamp
+        }
+    )
+  rescue
+    _ -> []
+  end
+
+  @doc """
   Lists persisted sessions (most recent first) as dashboard-friendly maps.
   """
   @spec list_sessions(non_neg_integer()) :: [map()]

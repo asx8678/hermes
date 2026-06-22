@@ -6,7 +6,7 @@ fn parse_chat_with_flags() {
     let cli = Cli::parse_from(["hermes", "--model", "gpt-4", "--port", "8080", "chat"]);
     assert_eq!(cli.model, "gpt-4");
     assert_eq!(cli.port, 8080);
-    assert_eq!(cli.provider, "anthropic");
+    assert_eq!(cli.provider, "openai");
     assert_eq!(cli.command, Some(Command::Chat));
 }
 
@@ -20,8 +20,8 @@ fn parse_version() {
 fn parse_no_args_defaults_to_chat() {
     let cli = Cli::parse_from(["hermes"]);
     assert_eq!(cli.command, None);
-    assert_eq!(cli.model, "claude-sonnet-4-20250514");
-    assert_eq!(cli.provider, "anthropic");
+    assert_eq!(cli.model, "moonshotai/Kimi-K2.7-Code");
+    assert_eq!(cli.provider, "openai");
     assert_eq!(cli.port, 4000);
 }
 

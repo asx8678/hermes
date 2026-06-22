@@ -253,7 +253,10 @@ defmodule Hermes.Providers.Anthropic do
       stop_reason: nil,
       usage: nil,
       event: nil,
-      stream_to: Keyword.get(opts, :stream_to)
+      stream_to: Keyword.get(opts, :stream_to),
+      status: nil,
+      error_body: "",
+      buffer: ""
     }
 
     result =
@@ -262,8 +265,11 @@ defmodule Hermes.Providers.Anthropic do
       end)
 
     case result do
+      {:ok, %{status: status, error_body: body}} when is_integer(status) and status >= 400 ->
+        {:error, {:http_error, status, body}}
+
       {:ok, final_acc} ->
-        response = build_response_from_acc(final_acc)
+        response = final_acc |> flush_buffer() |> build_response_from_acc()
         {:ok, response}
 
       {:error, reason} ->
@@ -290,32 +296,51 @@ defmodule Hermes.Providers.Anthropic do
     :ok
   end
 
+  defp handle_stream_chunk({:status, status}, acc), do: %{acc | status: status}
+  defp handle_stream_chunk({:headers, _headers}, acc), do: acc
+
+  defp handle_stream_chunk({:data, data}, %{status: status} = acc)
+       when is_integer(status) and status >= 400 do
+    %{acc | error_body: acc.error_body <> data}
+  end
+
   defp handle_stream_chunk({:data, data}, acc) do
-    lines = String.split(data, "\n")
-
-    Enum.reduce(lines, acc, fn line, inner_acc ->
-      line = String.trim(line)
-
-      cond do
-        String.starts_with?(line, "event:") ->
-          event = String.trim(String.replace_prefix(line, "event:", ""))
-          %{inner_acc | event: event}
-
-        String.starts_with?(line, "data:") ->
-          json = String.trim(String.replace_prefix(line, "data:", ""))
-
-          case Jason.decode(json) do
-            {:ok, event_data} -> process_event(inner_acc.event, event_data, inner_acc)
-            _ -> inner_acc
-          end
-
-        true ->
-          inner_acc
-      end
-    end)
+    # Buffer partial lines: a `data:` JSON line can be split across TCP chunks
+    # (notably tool-call argument fragments).
+    {lines, rest} = split_complete_lines(acc.buffer <> data)
+    Enum.reduce(lines, %{acc | buffer: rest}, &process_sse_line/2)
   end
 
   defp handle_stream_chunk(_, acc), do: acc
+
+  defp split_complete_lines(text) do
+    parts = String.split(text, "\n")
+    {Enum.drop(parts, -1), List.last(parts)}
+  end
+
+  defp flush_buffer(%{buffer: ""} = acc), do: acc
+  defp flush_buffer(%{buffer: buffer} = acc), do: process_sse_line(buffer, %{acc | buffer: ""})
+
+  defp process_sse_line(line, acc) do
+    line = String.trim(line)
+
+    cond do
+      String.starts_with?(line, "event:") ->
+        event = String.trim(String.replace_prefix(line, "event:", ""))
+        %{acc | event: event}
+
+      String.starts_with?(line, "data:") ->
+        json = String.trim(String.replace_prefix(line, "data:", ""))
+
+        case Jason.decode(json) do
+          {:ok, event_data} -> process_event(acc.event, event_data, acc)
+          _ -> acc
+        end
+
+      true ->
+        acc
+    end
+  end
 
   defp process_event("content_block_start", %{"content_block" => block}, acc) do
     %{acc | current: block}

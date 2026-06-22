@@ -36,6 +36,9 @@ defmodule Hermes.Sessions.SessionServer do
     :budget_grace_call,
     :status,
     :source,
+    :base_url,
+    :api_key,
+    :context_window,
     messages: []
   ]
 
@@ -139,7 +142,10 @@ defmodule Hermes.Sessions.SessionServer do
       iteration_budget_used: 0,
       budget_grace_call: false,
       status: :idle,
-      source: source
+      source: source,
+      base_url: Keyword.get(opts, :base_url),
+      api_key: Keyword.get(opts, :api_key),
+      context_window: Keyword.get(opts, :context_window)
     }
 
     Process.flag(:trap_exit, true)
@@ -274,39 +280,73 @@ defmodule Hermes.Sessions.SessionServer do
   # ----------------------------------------------------------------------------
 
   defp run_turn_in_task(session_pid, state) do
-    resolved = resolve_provider(state)
-    context_window = Catalog.context_window(state.provider, state.model)
+    try do
+      resolved = resolve_provider(state)
+      base_url = state.base_url || resolved.base_url
+      api_key = state.api_key || resolved.api_key
+      context_window = state.context_window || Catalog.context_window(state.provider, state.model)
 
-    opts = [
-      session_id: state.session_id,
-      messages: state.messages,
-      model: state.model,
-      provider: resolved.module,
-      api_mode: state.api_mode,
-      max_iterations: state.max_iterations,
-      session_pid: session_pid,
-      base_url: resolved.base_url,
-      api_key: resolved.api_key,
-      stream_to: state.session_id,
-      context_window: context_window
-    ]
+      opts = [
+        session_id: state.session_id,
+        messages: state.messages,
+        model: state.model,
+        provider: resolved.module,
+        api_mode: state.api_mode,
+        max_iterations: state.max_iterations,
+        session_pid: session_pid,
+        base_url: base_url,
+        api_key: api_key,
+        stream_to: state.session_id,
+        context_window: context_window
+      ]
 
-    review_opts = [
-      provider: resolved.module,
-      model: state.model,
-      api_mode: state.api_mode,
-      base_url: resolved.base_url,
-      api_key: resolved.api_key
-    ]
+      review_opts = [
+        provider: resolved.module,
+        model: state.model,
+        api_mode: state.api_mode,
+        base_url: base_url,
+        api_key: api_key
+      ]
 
-    case TurnLoop.run(opts) do
-      {:ok, result} ->
-        BackgroundReview.spawn_review(state.session_id, result.messages, review_opts)
-        GenServer.cast(session_pid, {:turn_finished, %{ok: true, result: result}})
+      case TurnLoop.run(opts) do
+        {:ok, result} ->
+          BackgroundReview.spawn_review(state.session_id, result.messages, review_opts)
+          GenServer.cast(session_pid, {:turn_finished, %{ok: true, result: result}})
 
-      {:error, error} ->
-        BackgroundReview.spawn_review(state.session_id, error.messages, review_opts)
-        GenServer.cast(session_pid, {:turn_finished, %{ok: false, error: error}})
+        {:error, error} ->
+          BackgroundReview.spawn_review(state.session_id, error.messages, review_opts)
+          GenServer.cast(session_pid, {:turn_finished, %{ok: false, error: error}})
+      end
+    rescue
+      error ->
+        GenServer.cast(
+          session_pid,
+          {:turn_finished,
+           %{
+             ok: false,
+             error: %{
+               message: Exception.message(error),
+               messages: state.messages,
+               api_calls: 0,
+               partial: true
+             }
+           }}
+        )
+    catch
+      kind, reason ->
+        GenServer.cast(
+          session_pid,
+          {:turn_finished,
+           %{
+             ok: false,
+             error: %{
+               message: "#{kind}: #{inspect(reason)}",
+               messages: state.messages,
+               api_calls: 0,
+               partial: true
+             }
+           }}
+        )
     end
   end
 

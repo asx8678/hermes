@@ -96,7 +96,10 @@ defmodule Hermes.Tools.Registry do
       Hermes.Tools.MemoryTool,
       Hermes.Tools.DelegateTool,
       Hermes.Tools.TodoTool,
-      Hermes.Tools.ClarifyTool
+      Hermes.Tools.ClarifyTool,
+      Hermes.Tools.CronjobTool,
+      Hermes.Tools.WebTool,
+      Hermes.Sessions.SessionSearch
     ]
 
     for mod <- builtin_modules do

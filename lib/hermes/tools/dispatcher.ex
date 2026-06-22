@@ -19,7 +19,10 @@ defmodule Hermes.Tools.Dispatcher do
           required(:session_id) => String.t(),
           required(:session_pid) => pid(),
           required(:finch_name) => atom(),
-          required(:repo) => module()
+          required(:repo) => module(),
+          optional(:base_url) => String.t() | nil,
+          optional(:api_key) => String.t() | nil,
+          optional(:context_window) => pos_integer() | nil
         }
 
   @doc """
@@ -27,7 +30,9 @@ defmodule Hermes.Tools.Dispatcher do
 
   `args` may be a map of decoded JSON arguments; any non-map value is
   coerced to an empty map. `context` carries the session id/pid, Finch
-  pool name, and Ecto repo.
+  pool name, Ecto repo, and optional provider connection config
+  (`base_url`, `api_key`, `context_window`) so tools such as `delegate_task`
+  can inherit the parent session's wiring.
   """
   @spec invoke(String.t(), map() | any(), context()) :: String.t()
   def invoke(tool_name, args, context) do

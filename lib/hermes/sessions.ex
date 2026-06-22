@@ -70,8 +70,8 @@ defmodule Hermes.Sessions do
     ])
     |> Enum.flat_map(fn pid ->
       case SessionServer.get_state(pid) do
-        %{session_id: id, model: model, status: status, messages: messages} ->
-          [%{id: id, model: model, status: status, message_count: length(messages)}]
+        %{session_id: id, model: model, provider: provider, status: status, messages: messages} ->
+          [%{id: id, model: model, provider: provider, status: status, message_count: length(messages)}]
 
         _ ->
           []
