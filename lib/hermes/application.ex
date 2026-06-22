@@ -14,6 +14,7 @@ defmodule Hermes.Application do
        repos: Application.fetch_env!(:hermes, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:hermes, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Hermes.PubSub},
+      {Finch, name: Hermes.Finch},
       {Registry, keys: :unique, name: Hermes.Sessions.Registry},
       {Hermes.Sessions.Supervisor, name: Hermes.Sessions.Supervisor},
       {Hermes.Tools.TerminalSidecar, name: Hermes.Tools.TerminalSidecar},

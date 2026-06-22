@@ -103,7 +103,8 @@ defmodule Hermes.Tools.DelegateTool do
           },
           provider: %{
             type: "string",
-            description: "Provider for the child session.",
+            description:
+              "Provider for the child session (e.g. \"anthropic\", \"openai\", \"makora\").",
             default: "anthropic"
           }
         },

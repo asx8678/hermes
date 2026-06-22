@@ -10,11 +10,11 @@ pub struct Cli {
     pub command: Option<Command>,
 
     /// Model identifier to use for the session.
-    #[arg(long, default_value = "claude-sonnet-4-20250514")]
+    #[arg(long, default_value = "moonshotai/Kimi-K2.7-Code")]
     pub model: String,
 
     /// Provider backend for API calls.
-    #[arg(long, default_value = "anthropic")]
+    #[arg(long, default_value = "openai")]
     pub provider: String,
 
     /// Port for gateway / Phoenix Channels websocket.

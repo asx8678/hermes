@@ -45,6 +45,11 @@ config :hermes, :gateway,
   approval_required: [:file_write],
   streaming_throttle_ms: 500
 
+# OpenAI-compatible provider (Hermes.Providers.OpenAI). Defaults target makora;
+# the API key is read at call time from :openai_api_key, MAKORA_OPTIMIZE_TOKEN,
+# or OPENAI_API_KEY.
+config :hermes, :openai_base_url, "https://inference.makora.com/v1"
+
 config :hermes, Oban,
   engine: Oban.Engines.Lite,
   repo: Hermes.Repo,

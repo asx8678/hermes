@@ -211,6 +211,8 @@ defmodule Hermes.Sessions.SessionServer do
   end
 
   defp provider_module(:anthropic), do: Hermes.Providers.Anthropic
+  defp provider_module(:openai), do: Hermes.Providers.OpenAI
+  defp provider_module(:makora), do: Hermes.Providers.OpenAI
   defp provider_module(mod) when is_atom(mod), do: mod
 
   defp broadcast_turn_complete(session_id, result) do

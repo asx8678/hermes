@@ -144,6 +144,8 @@ defmodule HermesWeb.SessionChannel do
   end
 
   defp provider_from_params("anthropic"), do: Hermes.Providers.Anthropic
+  defp provider_from_params("openai"), do: Hermes.Providers.OpenAI
+  defp provider_from_params("makora"), do: Hermes.Providers.OpenAI
   defp provider_from_params("mock"), do: Hermes.Providers.Mock
   defp provider_from_params(_), do: Hermes.Providers.Anthropic
 
