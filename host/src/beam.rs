@@ -1,0 +1,243 @@
+use anyhow::{anyhow, Context, Result};
+use rand::RngCore;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::process::{Child, Command};
+use tokio::time::{sleep, timeout};
+
+/// Embedded BEAM release (zstd-compressed).
+pub const RELEASE_ZST: &[u8] = include_bytes!("../embedded/hermes-release.tar.zst");
+
+/// Versioned cache dir name inside the cache root.
+pub const CACHE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Manages a spawned BEAM release child process.
+pub struct BeamProcess {
+    child: Child,
+    port: u16,
+    cache_dir: PathBuf,
+    _db_dir: tempfile::TempDir,
+    release_node: String,
+    release_cookie: String,
+    shutdown_done: bool,
+}
+
+impl BeamProcess {
+    /// Extract the embedded zstd release to the default versioned cache dir.
+    ///
+    /// The default cache root is `~/.hermes/cache`. This can be overridden by
+    /// setting the `HERMES_CACHE_DIR` environment variable.
+    pub async fn extract() -> Result<PathBuf> {
+        Self::extract_to(default_cache_root()).await
+    }
+
+    /// Extract the embedded zstd release to a versioned dir under `cache_root`.
+    ///
+    /// The returned path is `cache_root/<cargo-version>/`. It will contain a
+    /// `hermes/` release root with `bin/hermes`, `bin/server`, etc.
+    pub async fn extract_to(cache_root: impl AsRef<Path>) -> Result<PathBuf> {
+        let cache_root = cache_root.as_ref();
+        let cache_dir = cache_root.join(CACHE_VERSION);
+        let marker = cache_dir.join(".hermes-release-extracted");
+
+        if marker.exists() && cache_dir.join("hermes/bin/hermes").exists() {
+            return Ok(cache_dir);
+        }
+
+        tokio::fs::create_dir_all(cache_root)
+            .await
+            .with_context(|| format!("creating cache root {}", cache_root.display()))?;
+
+        let tmp_name = format!(".extract-{}", random_hex(8));
+        let tmp_dir = cache_root.join(&tmp_name);
+
+        tokio::task::spawn_blocking({
+            let tmp_dir = tmp_dir.clone();
+            move || -> Result<()> {
+                let _ = std::fs::remove_dir_all(&tmp_dir);
+                std::fs::create_dir_all(&tmp_dir)
+                    .with_context(|| format!("creating temp extract dir {}", tmp_dir.display()))?;
+                let decoder = zstd::Decoder::new(RELEASE_ZST)
+                    .context("creating zstd decoder for embedded release")?;
+                let mut archive = tar::Archive::new(decoder);
+                archive
+                    .unpack(&tmp_dir)
+                    .with_context(|| format!("unpacking release into {}", tmp_dir.display()))?;
+                Ok(())
+            }
+        })
+        .await
+        .context("extraction task panicked")??;
+
+        // Remove any partial previously extracted directory before renaming.
+        if cache_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(&cache_dir).await;
+        }
+
+        tokio::fs::rename(&tmp_dir, &cache_dir)
+            .await
+            .with_context(|| {
+                format!("renaming {} to {}", tmp_dir.display(), cache_dir.display())
+            })?;
+
+        tokio::fs::write(&marker, b"")
+            .await
+            .context("writing extraction marker")?;
+
+        Ok(cache_dir)
+    }
+
+    /// Spawn the BEAM release from `cache_dir` on the given `port`.
+    ///
+    /// A temporary database directory is created for this process so concurrent
+    /// spawns do not share state. The child is started with `kill_on_drop`.
+    pub async fn spawn(cache_dir: &Path, port: u16) -> Result<BeamProcess> {
+        let release_root = cache_dir.join("hermes");
+        let bin = release_root.join("bin/hermes");
+
+        if !bin.exists() {
+            return Err(anyhow!(
+                "BEAM release binary not found at {}",
+                bin.display()
+            ));
+        }
+
+        let db_dir = tempfile::tempdir().context("creating temporary database directory")?;
+        let db_path = db_dir.path().join("hermes.db");
+        let secret_key_base = random_hex(32);
+        let release_node = format!("hermes-{}", random_hex(6));
+        let release_cookie = random_hex(16);
+
+        let child = Command::new(&bin)
+            .arg("start")
+            .current_dir(&release_root)
+            .env("PHX_SERVER", "true")
+            .env("PORT", port.to_string())
+            .env("SECRET_KEY_BASE", &secret_key_base)
+            .env("DATABASE_PATH", &db_path)
+            .env("RELEASE_NODE", &release_node)
+            .env("RELEASE_COOKIE", &release_cookie)
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("spawning BEAM from {}", bin.display()))?;
+
+        Ok(BeamProcess {
+            child,
+            port,
+            cache_dir: cache_dir.to_path_buf(),
+            _db_dir: db_dir,
+            release_node,
+            release_cookie,
+            shutdown_done: false,
+        })
+    }
+
+    /// TCP poll until `127.0.0.1:<port>` accepts connections.
+    ///
+    /// Timeouts after 30 seconds and polls every 100 ms.
+    pub async fn wait_for_port(&mut self) -> Result<()> {
+        let addr = format!("127.0.0.1:{}", self.port);
+        let deadline = Duration::from_secs(30);
+        let interval = Duration::from_millis(100);
+
+        let start = tokio::time::Instant::now();
+        loop {
+            match TcpStream::connect(&addr).await {
+                Ok(_stream) => {
+                    return Ok(());
+                }
+                Err(_) => {
+                    if start.elapsed() >= deadline {
+                        return Err(anyhow!("timed out waiting for {}", addr));
+                    }
+                    sleep(interval).await;
+                }
+            }
+        }
+    }
+
+    /// Graceful shutdown of the BEAM child process.
+    ///
+    /// Attempts, in order:
+    /// 1. `bin/hermes stop` RPC shutdown.
+    /// 2. SIGTERM via `kill -TERM <pid>`.
+    /// 3. SIGKILL fallback via `child.kill()`.
+    pub async fn shutdown(&mut self) -> Result<()> {
+        if self.shutdown_done {
+            return Ok(());
+        }
+        self.shutdown_done = true;
+
+        let release_root = self.cache_dir.join("hermes");
+        let bin = release_root.join("bin/hermes");
+
+        // 1. Try a graceful RPC stop using the same node/cookie.
+        let _ = timeout(Duration::from_secs(5), async {
+            Command::new(&bin)
+                .arg("stop")
+                .current_dir(&release_root)
+                .env("RELEASE_ROOT", &release_root)
+                .env("RELEASE_NODE", &self.release_node)
+                .env("RELEASE_COOKIE", &self.release_cookie)
+                .status()
+                .await
+        })
+        .await;
+
+        // 2. Wait briefly for the child to exit on its own.
+        match timeout(Duration::from_secs(5), self.child.wait()).await {
+            Ok(Ok(_status)) => return Ok(()),
+            _ => {}
+        }
+
+        // 3. SIGTERM.
+        if let Some(pid) = self.child.id() {
+            let _ = Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .status()
+                .await;
+        }
+
+        match timeout(Duration::from_secs(3), self.child.wait()).await {
+            Ok(Ok(_status)) => return Ok(()),
+            _ => {}
+        }
+        // 4. SIGKILL fallback.
+        let _ = self.child.kill().await;
+        let _ = timeout(Duration::from_secs(3), self.child.wait()).await;
+
+        Ok(())
+    }
+
+    /// Port the BEAM process is listening on.
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Path to the extracted cache directory (contains `hermes/`).
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+}
+
+fn default_cache_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("HERMES_CACHE_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    dirs::home_dir()
+        .map(|h| h.join(".hermes/cache"))
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .expect("current directory")
+                .join(".hermes/cache")
+        })
+}
+
+fn random_hex(byte_len: usize) -> String {
+    let mut buf = vec![0u8; byte_len];
+    rand::thread_rng().fill_bytes(&mut buf);
+    hex::encode(&buf)
+}
