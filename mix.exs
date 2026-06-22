@@ -49,6 +49,7 @@ defmodule Hermes.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:finch, "~> 0.19"},
       {:req, "~> 0.5"},
+      {:oban, "~> 2.18"},
       {:bandit, "~> 1.5"}
     ]
   end
