@@ -39,3 +39,6 @@ hermes-*.tar
 # Elixir release
 /_build/
 /rel/
+# Rustler NIF build artifacts
+/priv/native/
+/host/native/target/

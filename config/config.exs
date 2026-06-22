@@ -11,6 +11,10 @@ config :hermes,
   ecto_repos: [Hermes.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :hermes, Hermes.Native,
+  crate: "hermes_native",
+  path: "host/native"
+
 # Configure the endpoint
 config :hermes, HermesWeb.Endpoint,
   url: [host: "localhost"],

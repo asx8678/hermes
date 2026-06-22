@@ -50,6 +50,7 @@ defmodule Hermes.MixProject do
       {:finch, "~> 0.19"},
       {:req, "~> 0.5"},
       {:oban, "~> 2.18"},
+      {:rustler, "~> 0.31", runtime: false},
       {:bandit, "~> 1.5"}
     ]
   end
