@@ -178,13 +178,16 @@ defmodule Hermes.Providers.OpenAI do
   @spec stream(String.t(), [map()], keyword(), atom()) ::
           {:ok, NormalizedResponse.t()} | {:error, term()}
   def stream(model, messages, opts \\ [], finch_name \\ Hermes.Finch) do
+    api_key = Keyword.get(opts, :api_key) || fetch_api_key()
+
     headers = [
-      {"authorization", "Bearer " <> fetch_api_key()},
+      {"authorization", "Bearer " <> api_key},
       {"content-type", "application/json"}
     ]
 
     tools = Keyword.get(opts, :tools)
     params = Keyword.get(opts, :params, [])
+    stream_to = Keyword.get(opts, :stream_to)
 
     body =
       build_kwargs(model, messages, tools, params)
@@ -192,9 +195,10 @@ defmodule Hermes.Providers.OpenAI do
       |> Map.put(:stream_options, %{include_usage: true})
       |> Jason.encode!()
 
-    request = Finch.build(:post, chat_completions_url(), headers, body)
+    request =
+      Finch.build(:post, chat_completions_url(Keyword.get(opts, :base_url)), headers, body)
 
-    case Finch.stream(request, finch_name, initial_acc(), &handle_stream_chunk/2) do
+    case Finch.stream(request, finch_name, initial_acc(stream_to), &handle_stream_chunk/2) do
       {:ok, %{status: status, error_body: body}} when is_integer(status) and status >= 400 ->
         {:error, {:http_error, status, body}}
 
@@ -218,7 +222,7 @@ defmodule Hermes.Providers.OpenAI do
     |> normalize_response([])
   end
 
-  defp initial_acc do
+  defp initial_acc(stream_to \\ nil) do
     %{
       status: nil,
       error_body: "",
@@ -228,7 +232,9 @@ defmodule Hermes.Providers.OpenAI do
       # index => %{id, name, arguments}
       tool_calls: %{},
       finish_reason: nil,
-      usage: nil
+      usage: nil,
+      # session id to broadcast incremental deltas to, or nil
+      stream_to: stream_to
     }
   end
 
@@ -241,7 +247,20 @@ defmodule Hermes.Providers.OpenAI do
 
   defp base_url, do: Application.get_env(:hermes, :openai_base_url, @default_base_url)
 
-  defp chat_completions_url, do: String.trim_trailing(base_url(), "/") <> "/chat/completions"
+  defp chat_completions_url(override) do
+    base = override || base_url()
+    String.trim_trailing(base, "/") <> "/chat/completions"
+  end
+
+  # Broadcast an incremental content delta to the session topic so the TUI and
+  # LiveView render tokens as they arrive. No-op unless a session id was passed.
+  defp maybe_broadcast_delta(nil, _text), do: :ok
+  defp maybe_broadcast_delta(_session_id, text) when text in [nil, ""], do: :ok
+
+  defp maybe_broadcast_delta(session_id, text) when is_binary(text) do
+    Phoenix.PubSub.broadcast(Hermes.PubSub, "session:#{session_id}", {:stream_delta, text})
+    :ok
+  end
 
   # --- SSE streaming -------------------------------------------------------
 
@@ -308,6 +327,8 @@ defmodule Hermes.Providers.OpenAI do
 
   defp process_choice(choice, acc) do
     delta = choice["delta"] || %{}
+
+    maybe_broadcast_delta(acc.stream_to, delta["content"])
 
     acc = append_text(acc, :content, delta["content"])
     acc = append_text(acc, :reasoning, delta["reasoning_content"] || delta["reasoning"])

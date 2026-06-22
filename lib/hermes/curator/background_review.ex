@@ -52,6 +52,8 @@ defmodule Hermes.Curator.BackgroundReview do
       provider: Keyword.get(opts, :provider, Hermes.Providers.Anthropic),
       model: Keyword.get(opts, :model, "claude-sonnet-4-20250514"),
       api_mode: Keyword.get(opts, :api_mode, "anthropic_messages"),
+      base_url: Keyword.get(opts, :base_url),
+      api_key: Keyword.get(opts, :api_key),
       finch_name: Keyword.get(opts, :finch_name, Hermes.Finch),
       max_iterations: Keyword.get(opts, :max_iterations, 5),
       system_prompt: Keyword.get(opts, :system_prompt, nil)
@@ -69,6 +71,8 @@ defmodule Hermes.Curator.BackgroundReview do
       model: opts[:model],
       provider: opts[:provider],
       api_mode: opts[:api_mode],
+      base_url: opts[:base_url],
+      api_key: opts[:api_key],
       tools: tools,
       max_iterations: opts[:max_iterations],
       budget_grace_call: false,

@@ -42,7 +42,9 @@ defmodule HermesWeb.SessionChannel do
     opts =
       [
         model: params["model"],
-        provider: provider_from_params(params["provider"]),
+        # Pass the provider NAME through; the session resolves it (module,
+        # base_url, api_key) via Hermes.Catalog, which knows built-ins + customs.
+        provider: params["provider"],
         api_mode: params["api_mode"],
         max_iterations: parse_max_iterations(params["max_iterations"])
       ]
@@ -88,6 +90,70 @@ defmodule HermesWeb.SessionChannel do
     {:reply, {:error, %{reason: "missing message"}}, socket}
   end
 
+  # --- Model / provider manager (/model, /providers) ------------------------
+
+  def handle_in("session:config", params, socket) do
+    case socket.assigns[:session_id] do
+      nil ->
+        {:reply, {:error, %{reason: "no active session"}}, socket}
+
+      session_id ->
+        case SessionServer.set_config(session_id, params) do
+          {:ok, config} -> {:reply, {:ok, config}, socket}
+          {:error, reason} -> {:reply, {:error, %{reason: to_string(reason)}}, socket}
+        end
+    end
+  end
+
+  def handle_in("session:list", _params, socket) do
+    push(socket, "sessions:listed", %{sessions: Hermes.Sessions.list_all()})
+    {:reply, {:ok, %{}}, socket}
+  end
+
+  def handle_in("providers:list", _params, socket) do
+    push_providers(socket)
+    {:reply, {:ok, %{}}, socket}
+  end
+
+  def handle_in("providers:add", params, socket) do
+    case Hermes.Catalog.upsert_provider(params) do
+      {:ok, _provider} ->
+        push_providers(socket)
+        {:reply, {:ok, %{name: params["name"]}}, socket}
+
+      {:error, changeset} ->
+        {:reply, {:error, %{reason: changeset_errors(changeset)}}, socket}
+    end
+  end
+
+  def handle_in("providers:remove", %{"name" => name}, socket) do
+    Hermes.Catalog.delete_provider(name)
+    push_providers(socket)
+    {:reply, {:ok, %{}}, socket}
+  end
+
+  def handle_in("models:list", params, socket) do
+    push_models(socket, params["provider"])
+    {:reply, {:ok, %{}}, socket}
+  end
+
+  def handle_in("models:add", params, socket) do
+    case Hermes.Catalog.upsert_model(params) do
+      {:ok, _model} ->
+        push_models(socket, params["provider_name"])
+        {:reply, {:ok, %{}}, socket}
+
+      {:error, changeset} ->
+        {:reply, {:error, %{reason: changeset_errors(changeset)}}, socket}
+    end
+  end
+
+  def handle_in("models:remove", %{"provider_name" => provider, "model_id" => model_id}, socket) do
+    Hermes.Catalog.delete_model(provider, model_id)
+    push_models(socket, provider)
+    {:reply, {:ok, %{}}, socket}
+  end
+
   def handle_in("approval:respond", _payload, socket) do
     {:reply, {:error, %{reason: "not implemented"}}, socket}
   end
@@ -131,6 +197,11 @@ defmodule HermesWeb.SessionChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:session_config, payload}, socket) do
+    push(socket, "session:config", payload)
+    {:noreply, socket}
+  end
+
   def handle_info(_msg, socket) do
     {:noreply, socket}
   end
@@ -143,11 +214,25 @@ defmodule HermesWeb.SessionChannel do
     socket.topic
   end
 
-  defp provider_from_params("anthropic"), do: Hermes.Providers.Anthropic
-  defp provider_from_params("openai"), do: Hermes.Providers.OpenAI
-  defp provider_from_params("makora"), do: Hermes.Providers.OpenAI
-  defp provider_from_params("mock"), do: Hermes.Providers.Mock
-  defp provider_from_params(_), do: Hermes.Providers.Anthropic
+  defp push_providers(socket) do
+    push(socket, "providers:listed", %{providers: Hermes.Catalog.list_providers()})
+  end
+
+  defp push_models(socket, provider) do
+    push(socket, "models:listed", %{
+      provider: provider,
+      models: Hermes.Catalog.list_models(provider)
+    })
+  end
+
+  defp changeset_errors(changeset) do
+    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
+      Enum.reduce(opts, msg, fn {key, value}, acc ->
+        String.replace(acc, "%{#{key}}", to_string(value))
+      end)
+    end)
+    |> Enum.map_join("; ", fn {field, errs} -> "#{field} #{Enum.join(errs, ", ")}" end)
+  end
 
   defp parse_max_iterations(nil), do: nil
   defp parse_max_iterations(n) when is_integer(n), do: n

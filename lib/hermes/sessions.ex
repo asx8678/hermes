@@ -80,6 +80,34 @@ defmodule Hermes.Sessions do
   end
 
   @doc """
+  Returns all known sessions — live ones (from the registry, with status)
+  merged with persisted ones (from the store) — most-recent-first, deduped by
+  id. Live sessions win on conflict so their status/model is current.
+  """
+  @spec list_all() :: [map()]
+  def list_all do
+    live = Map.new(list_sessions(), &{&1.id, Map.put(&1, :live, true)})
+
+    persisted =
+      Hermes.Sessions.Store.list_sessions()
+      |> Map.new(fn s ->
+        {s.id,
+         %{
+           id: s.id,
+           model: s.model,
+           status: :stopped,
+           message_count: s.message_count,
+           live: false
+         }}
+      end)
+
+    persisted
+    |> Map.merge(live)
+    |> Map.values()
+    |> Enum.sort_by(& &1.live, :desc)
+  end
+
+  @doc """
   Triggers a non-blocking turn for the session identified by `session_id`.
 
   See `Hermes.Sessions.SessionServer.run_turn_async/2`.

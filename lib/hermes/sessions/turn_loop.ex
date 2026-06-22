@@ -85,6 +85,14 @@ defmodule Hermes.Sessions.TurnLoop do
       finch_name: finch_name,
       system_prompt: system_prompt,
       session_pid: session_pid,
+      # Provider connection config (per-provider base_url/api_key from the catalog).
+      base_url: Keyword.get(opts, :base_url),
+      api_key: Keyword.get(opts, :api_key),
+      # When set, the provider broadcasts incremental {:stream_delta, text} on
+      # "session:<id>" so the TUI/LiveView render tokens live.
+      stream_to: Keyword.get(opts, :stream_to),
+      # Model context window (tokens) used to trigger context compression.
+      context_window: Keyword.get(opts, :context_window),
       messages: messages,
       api_call_count: 0,
       budget: budget,
@@ -148,12 +156,18 @@ defmodule Hermes.Sessions.TurnLoop do
   # ---------------------------------------------------------------------------
 
   defp do_turn(state) do
+    # Compress older history if it is about to exceed the model's context window.
+    state = Hermes.Sessions.Compaction.maybe_compress(state)
+
     api_messages = prepare_api_messages(state.messages, state.system_prompt)
     tool_schemas = if state.tools == [], do: nil, else: state.tools
 
     provider_opts = [
       tools: tool_schemas,
-      params: [max_tokens: 16_384]
+      params: [max_tokens: 16_384],
+      base_url: state.base_url,
+      api_key: state.api_key,
+      stream_to: state.stream_to
     ]
 
     try do

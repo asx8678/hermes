@@ -48,10 +48,20 @@ defmodule Hermes.Providers.Mock do
   """
   @spec stream(String.t(), [map()], keyword(), atom()) ::
           {:ok, NormalizedResponse.t()} | {:error, term()}
-  def stream(_model, _messages, _opts \\ [], _finch_name \\ Hermes.Finch) do
+  def stream(_model, _messages, opts \\ [], _finch_name \\ Hermes.Finch) do
+    content = "Hello from the mock provider. This is a smoke-test response."
+
+    case Keyword.get(opts, :stream_to) do
+      session_id when is_binary(session_id) ->
+        Phoenix.PubSub.broadcast(Hermes.PubSub, "session:#{session_id}", {:stream_delta, content})
+
+      _ ->
+        :ok
+    end
+
     {:ok,
      %NormalizedResponse{
-       content: "Hello from the mock provider. This is a smoke-test response.",
+       content: content,
        finish_reason: "stop",
        usage: %Usage{input_tokens: 0, output_tokens: 12, cached_tokens: 0}
      }}

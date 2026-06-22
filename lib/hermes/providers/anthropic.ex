@@ -228,7 +228,8 @@ defmodule Hermes.Providers.Anthropic do
   @spec stream(String.t(), [map()], keyword(), atom()) ::
           {:ok, NormalizedResponse.t()} | {:error, term()}
   def stream(model, messages, opts \\ [], finch_name \\ Hermes.Finch) do
-    api_key = fetch_api_key()
+    api_key = Keyword.get(opts, :api_key) || fetch_api_key()
+    url = anthropic_url(Keyword.get(opts, :base_url))
 
     headers = [
       {"x-api-key", api_key},
@@ -244,14 +245,15 @@ defmodule Hermes.Providers.Anthropic do
       |> Map.put(:stream, true)
       |> Jason.encode!()
 
-    request = Finch.build(:post, @api_url, headers, body)
+    request = Finch.build(:post, url, headers, body)
 
     acc = %{
       blocks: [],
       current: nil,
       stop_reason: nil,
       usage: nil,
-      event: nil
+      event: nil,
+      stream_to: Keyword.get(opts, :stream_to)
     }
 
     result =
@@ -273,6 +275,19 @@ defmodule Hermes.Providers.Anthropic do
     Application.get_env(:hermes, :anthropic_api_key) ||
       System.get_env("ANTHROPIC_API_KEY") ||
       ""
+  end
+
+  defp anthropic_url(nil), do: @api_url
+
+  defp anthropic_url(base) when is_binary(base),
+    do: String.trim_trailing(base, "/") <> "/messages"
+
+  defp maybe_broadcast_delta(nil, _text), do: :ok
+  defp maybe_broadcast_delta(_session_id, text) when text in [nil, ""], do: :ok
+
+  defp maybe_broadcast_delta(session_id, text) when is_binary(text) do
+    Phoenix.PubSub.broadcast(Hermes.PubSub, "session:#{session_id}", {:stream_delta, text})
+    :ok
   end
 
   defp handle_stream_chunk({:data, data}, acc) do
@@ -312,6 +327,7 @@ defmodule Hermes.Providers.Anthropic do
     updated =
       case delta["type"] do
         "text_delta" ->
+          maybe_broadcast_delta(acc.stream_to, delta["text"])
           text = current["text"] || ""
           Map.put(current, "text", text <> (delta["text"] || ""))
 
