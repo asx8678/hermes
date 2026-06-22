@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use hermes_host::beam::BeamProcess;
 use hermes_host::cli::{Cli, Command};
-use hermes_host::ws_client::ChannelsClient;
+use hermes_host::tui;
 use rand::Rng;
 
 #[tokio::main]
@@ -17,7 +17,7 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Command::Chat) {
-        Command::Chat => chat().await,
+        Command::Chat => chat(cli.model, cli.provider).await,
         Command::Gateway => {
             println!("hermes v{}", env!("CARGO_PKG_VERSION"));
             println!("gateway mode on port {}", cli.port);
@@ -32,16 +32,15 @@ async fn run() -> Result<()> {
     }
 }
 
-async fn chat() -> Result<()> {
+async fn chat(model: String, provider: String) -> Result<()> {
     let cache_dir = BeamProcess::extract().await?;
     let port = random_port();
     let mut beam = BeamProcess::spawn(&cache_dir, port).await?;
     beam.wait_for_port().await?;
 
-    let mut client = ChannelsClient::connect(port).await?;
-    client.join("session:new").await?;
+    let client = hermes_host::ws_client::ChannelsClient::connect(port).await?;
 
-    println!("Connected to Hermes on port {}", port);
+    tui::run(client, model, provider).await?;
 
     beam.shutdown().await?;
     Ok(())
