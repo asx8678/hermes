@@ -17,6 +17,8 @@ defmodule Hermes.Application do
       {Registry, keys: :unique, name: Hermes.Sessions.Registry},
       {Finch, name: Hermes.Finch},
       {Hermes.Sessions.Supervisor, name: Hermes.Sessions.Supervisor},
+      {Hermes.Gateway.Registry, name: Hermes.Gateway.Registry},
+      {Hermes.Gateway.Supervisor, name: Hermes.Gateway.Supervisor},
       # Start to serve requests, typically the last entry
       HermesWeb.Endpoint
     ]
