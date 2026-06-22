@@ -698,7 +698,7 @@ graph LR
     B["B · Rust host + single binary<br/>✅"]
     C["C · Gateway + learning loop<br/>✅"]
     D["D · Sidecars + NIF hot paths<br/>✅"]
-    E["E · Server delivery + packaging matrix<br/>🚧"]
+    E["E · Server delivery + packaging matrix<br/>✅"]
     A --> B
     A --> C
     B --> D
@@ -714,7 +714,7 @@ graph LR
   LiveView dashboard. ✅
 - **D — Hot paths & sandboxing.** Sidecars for terminal/execute_code, NIF for tokenization. ✅
 - **E — Server delivery + packaging.** systemd/container server mode + per-(OS, arch) fat-binary
-  matrix. 🚧 Dockerfile + deploy scaffolding present.
+  matrix + embedded app source for system-runtime launches. ✅
 
 ### Recently closed
 
@@ -756,14 +756,12 @@ graph LR
   deltas, model/provider switcher.
 - **Provider drift resolved** — CLI tests updated to match the as-built defaults
   (`openai` / `moonshotai/Kimi-K2.7-Code`); `Hermes.Finch` started in the supervision tree.
+- **System-runtime launch** — the Rust host embeds the Elixir app source (271 KiB zstd tarball)
+  and extracts it to `~/.hermes/app-src/<version>/` on first launch, so a mise-managed system
+  runtime can run `mix phx.server` from source instead of the embedded ERTS release fallback.
 
 ### Known gaps / drift (honest status)
 
-- **System-runtime optimization for packaged binaries** is deferred (`hermes-3p9`). The current
-  shipping path works: the Rust host embeds a full `mix release` (ERTS included) and extracts it
-  on first run. Supporting a lighter system-runtime launch (using the user's Erlang/Elixir via mise)
-  would require either embedding the app source or publishing the Elixir package to Hex; that is
-  left for Milestone E.
 - **Intentional provider drift** — the rewrite ships with Makora/OpenAI as the default provider
   (`moonshotai/Kimi-K2.7-Code`) instead of the Anthropic-first default the original spec specified.
   This is now consistent across code, tests, and catalog; Anthropic remains fully supported as a
