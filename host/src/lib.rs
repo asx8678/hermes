@@ -6,5 +6,6 @@ pub mod cli;
 pub mod release;
 pub mod sidecar;
 pub mod supervisor;
+pub mod theme;
 pub mod tui;
 pub mod ws_client;

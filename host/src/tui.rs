@@ -1,6 +1,5 @@
-use crate::app::{
-    role_label, role_style, App, AppCommand, AppStatus, ApprovalRequest, Client, Picker,
-};
+use crate::app::{App, AppCommand, AppStatus, ApprovalRequest, Client, Picker};
+use crate::theme::Palette;
 use crate::ws_client::ChannelsClient;
 use anyhow::{anyhow, Result};
 use crossterm::{
@@ -10,14 +9,15 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame, Terminal,
 };
 use serde_json::json;
 use std::io::{self, Stdout};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use textwrap::Options as TextWrapOptions;
 
@@ -25,157 +25,224 @@ use textwrap::Options as TextWrapOptions;
 /// channel on this topic after `session:create` returns the real session id.
 const NEW_SESSION_TOPIC: &str = "session:new";
 
+/// Frame counter used to animate the footer spinner.
+static FRAME: AtomicU64 = AtomicU64::new(0);
+
+/// A rounded, accent-titled panel matching droid's boxes.
+fn panel(title: &str, edge: Color, p: Palette) -> Block<'static> {
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(edge));
+    if !title.is_empty() {
+        block = block.title(Span::styled(
+            title.to_string(),
+            Style::default().fg(p.primary).add_modifier(Modifier::BOLD),
+        ));
+    }
+    block
+}
+
 /// Render the full TUI frame from the current application state.
 ///
-/// Layout mirrors the Python TUI: a scrollable message history, an input box at
-/// the bottom, and a status bar.
+/// Tokyo Night look ported from droid: a borderless scrolling transcript, a
+/// one-line status row, a rounded accent-edged input box, and a footer.
 pub fn render_app(frame: &mut Frame, app: &App<impl Client>) {
+    let p = Palette::current();
     let area = frame.area();
-    // When a picker is open, give the bottom panel more room for the list.
+    // When a picker is open, give the input panel more room for the list.
     let input_height = match &app.picker {
         Some(picker) => {
             // borders (2) + up to ~8 visible items, clamped to the frame.
             let rows = picker.items.len().clamp(1, 8) as u16 + 2;
-            rows.min(area.height.saturating_sub(2)).max(3)
+            rows.min(area.height.saturating_sub(4)).max(3)
         }
         None => 3,
     };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),
-            Constraint::Length(input_height),
-            Constraint::Length(1),
+            Constraint::Min(0),       // transcript (fills)
+            Constraint::Length(1),    // status row
+            Constraint::Length(input_height), // input
+            Constraint::Length(1),    // footer
         ])
         .split(area);
 
-    render_messages(frame, app, chunks[0]);
-    render_input(frame, app, chunks[1]);
-    render_status(frame, app, chunks[2]);
+    render_messages(frame, app, chunks[0], p);
+    render_status_row(frame, app, chunks[1], p);
+    render_input(frame, app, chunks[2], p);
+    render_footer(frame, app, chunks[3], p);
 }
 
-fn render_messages(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
-    let inner = Block::default().borders(Borders::ALL).title("Messages");
-    let inner_area = inner.inner(area);
-    frame.render_widget(inner, area);
+/// The empty-session splash, centered in the transcript area.
+fn welcome_lines(p: Palette) -> Vec<Line<'static>> {
+    let accent = Style::default().fg(p.primary).add_modifier(Modifier::BOLD);
+    let muted = Style::default().fg(p.muted);
+    vec![
+        Line::from(""),
+        Line::from(Span::styled("hermes", accent)).centered(),
+        Line::from(Span::styled("persistent personal AI agent", muted)).centered(),
+        Line::from(""),
+        Line::from(Span::styled(
+            "type a message · /help · Ctrl+C to quit",
+            muted,
+        ))
+        .centered(),
+    ]
+}
 
-    let width = inner_area.width.max(8) as usize;
+fn render_messages(frame: &mut Frame, app: &App<impl Client>, area: Rect, p: Palette) {
+    let width = (area.width.max(8)) as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for message in &app.messages {
-        lines.extend(message_lines(message, width));
+    for (i, message) in app.messages.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.extend(message_lines(message, width, p));
+    }
+    if lines.is_empty() {
+        lines = welcome_lines(p);
     }
 
-    let visible = inner_area.height as usize;
+    let visible = area.height as usize;
     let max_scroll = lines.len().saturating_sub(visible);
     let scroll = app.scroll.min(max_scroll);
-    let text = Text::from(lines);
-    let paragraph = Paragraph::new(text).scroll((scroll as u16, 0));
-    frame.render_widget(paragraph, inner_area);
+    let paragraph = Paragraph::new(Text::from(lines)).scroll((scroll as u16, 0));
+    frame.render_widget(paragraph, area);
 }
 
-fn message_lines(message: &crate::app::ChatMessage, width: usize) -> Vec<Line<'static>> {
+fn message_lines(message: &crate::app::ChatMessage, width: usize, p: Palette) -> Vec<Line<'static>> {
     let wrap_width = width.saturating_sub(2).max(1);
     let opts = TextWrapOptions::new(wrap_width);
-    let mut lines = Vec::new();
-    let style = role_style(&message.role);
-    let label = role_label(&message.role);
 
-    lines.push(Line::from(vec![
-        Span::styled(format!("[{}] ", label), style.add_modifier(Modifier::BOLD)),
-        Span::styled(
-            message.timestamp.elapsed().as_secs().to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
-
+    // Collapsed tool output gets a single muted line.
     if message.role == "tool" && message.collapsed {
-        lines.push(Line::from(Span::styled(
-            "  ▶ (collapsed)".to_string(),
-            style,
-        )));
-        return lines;
+        return vec![Line::from(Span::styled(
+            "  • ▶ (collapsed)".to_string(),
+            Style::default().fg(p.tool_param),
+        ))];
     }
 
+    let mut lines = Vec::new();
+    let mut first = true;
     for raw_line in message.content.lines() {
         if raw_line.is_empty() {
             lines.push(Line::from(""));
+            first = false;
             continue;
         }
-        let wrapped = textwrap::fill(raw_line, opts.clone());
-        for wrapped_line in wrapped.lines() {
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(wrapped_line.to_string(), style),
-            ]));
+        for wrapped_line in textwrap::fill(raw_line, opts.clone()).lines() {
+            let w = wrapped_line.to_string();
+            let line = match message.role.as_str() {
+                // User: an accent gutter bar with a subtly tinted background.
+                "user" => Line::from(vec![
+                    Span::styled("▌ ", Style::default().fg(p.user_symbol)),
+                    Span::styled(w, Style::default().fg(p.user_text).bg(p.user_bg)),
+                ]),
+                // Assistant: indented primary text.
+                "assistant" => Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(w, Style::default().fg(p.text)),
+                ]),
+                // Tool: a bullet header on the first line, params after.
+                "tool" => {
+                    if first {
+                        Line::from(vec![
+                            Span::styled("  • ".to_string(), Style::default().fg(p.primary)),
+                            Span::styled(
+                                w,
+                                Style::default().fg(p.tool_name).add_modifier(Modifier::BOLD),
+                            ),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(w, Style::default().fg(p.tool_param)),
+                        ])
+                    }
+                }
+                // System messages carry errors/notices — keep them visible.
+                "system" => Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(w, Style::default().fg(p.error)),
+                ]),
+                _ => Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(w, Style::default().fg(p.muted)),
+                ]),
+            };
+            lines.push(line);
+            first = false;
         }
     }
     lines
 }
 
-fn render_input(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
+fn render_input(frame: &mut Frame, app: &App<impl Client>, area: Rect, p: Palette) {
     if let Some(ref req) = app.pending_approval {
-        render_approval_prompt(frame, area, req);
+        render_approval_prompt(frame, area, req, p);
         return;
     }
     if let Some(ref picker) = app.picker {
-        render_picker(frame, area, picker);
+        render_picker(frame, area, picker, p);
         return;
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Input")
-        .border_style(match app.status {
-            AppStatus::Running => Style::default().fg(Color::Yellow),
-            AppStatus::WaitingForApproval => Style::default().fg(Color::Red),
-            _ => Style::default(),
-        });
+    // Accent edge by default; warning while a turn runs, error while blocked.
+    let edge = match app.status {
+        AppStatus::Running => p.warning,
+        AppStatus::WaitingForApproval => p.error,
+        _ => p.primary,
+    };
     let text = Text::from(Line::from(vec![
-        Span::styled("> ", Style::default().fg(Color::Green)),
-        Span::raw(app.input.clone()),
-        Span::styled("█", Style::default().fg(Color::Green)),
+        Span::styled(
+            "> ",
+            Style::default().fg(p.user_symbol).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(app.input.clone(), Style::default().fg(p.text)),
+        Span::styled("█", Style::default().fg(p.user_symbol)),
     ]));
-    let paragraph = Paragraph::new(text).block(block);
+    let paragraph = Paragraph::new(text).block(panel("", edge, p));
     frame.render_widget(paragraph, area);
 }
 
-fn render_approval_prompt(frame: &mut Frame, area: Rect, req: &ApprovalRequest) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Approval Required")
-        .border_style(Style::default().fg(Color::Red));
+fn render_approval_prompt(frame: &mut Frame, area: Rect, req: &ApprovalRequest, p: Palette) {
     let text = Text::from(vec![
         Line::from(vec![
-            Span::raw("Action: "),
-            Span::styled(req.tool_name.clone(), Style::default().fg(Color::Yellow)),
+            Span::styled("Action: ", Style::default().fg(p.muted)),
+            Span::styled(
+                req.tool_name.clone(),
+                Style::default().fg(p.tool_name).add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" "),
-            Span::raw(req.args.clone()),
+            Span::styled(req.args.clone(), Style::default().fg(p.tool_param)),
         ]),
-        Line::from(vec![Span::raw("Reason: "), Span::raw(req.reason.clone())]),
         Line::from(vec![
-            Span::raw("Approve? "),
-            Span::styled("[Y]es", Style::default().fg(Color::Green)),
-            Span::raw(" / "),
-            Span::styled("[N]o", Style::default().fg(Color::Red)),
+            Span::styled("Reason: ", Style::default().fg(p.muted)),
+            Span::styled(req.reason.clone(), Style::default().fg(p.text)),
+        ]),
+        Line::from(vec![
+            Span::styled("Approve? ", Style::default().fg(p.text)),
+            Span::styled("[Y]es", Style::default().fg(p.success).add_modifier(Modifier::BOLD)),
+            Span::styled(" / ", Style::default().fg(p.muted)),
+            Span::styled("[N]o", Style::default().fg(p.error).add_modifier(Modifier::BOLD)),
         ]),
     ]);
-    let paragraph = Paragraph::new(text).block(block);
+    let paragraph = Paragraph::new(text).block(panel(" Approval Required ", p.error, p));
     frame.render_widget(paragraph, area);
 }
 
-fn render_picker(frame: &mut Frame, area: Rect, picker: &Picker) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(
-            "{}  (↑/↓ move · Enter select · Esc cancel)",
-            picker.title
-        ))
-        .border_style(Style::default().fg(Color::Cyan));
+fn render_picker(frame: &mut Frame, area: Rect, picker: &Picker, p: Palette) {
+    let block = panel(
+        &format!(" {}  (↑/↓ move · Enter select · Esc cancel) ", picker.title),
+        p.primary,
+        p,
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // The input row is short, so keep only as many rows as fit and scroll so the
-    // selected item stays visible.
+    // Keep only as many rows as fit and scroll so the selected item stays visible.
     let visible = (inner.height as usize).max(1);
     let start = if picker.selected >= visible {
         picker.selected + 1 - visible
@@ -186,19 +253,14 @@ fn render_picker(frame: &mut Frame, area: Rect, picker: &Picker) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     for (idx, item) in picker.items.iter().enumerate().skip(start).take(visible) {
         if idx == picker.selected {
-            lines.push(Line::from(vec![
-                Span::styled("> ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    item.label.clone(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
+            lines.push(Line::from(Span::styled(
+                format!(" ❯ {} ", item.label),
+                Style::default().fg(p.sel_fg).bg(p.sel_bg).add_modifier(Modifier::BOLD),
+            )));
         } else {
             lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(item.label.clone(), Style::default().fg(Color::Gray)),
+                Span::raw("   "),
+                Span::styled(item.label.clone(), Style::default().fg(p.text)),
             ]));
         }
     }
@@ -206,25 +268,66 @@ fn render_picker(frame: &mut Frame, area: Rect, picker: &Picker) {
     frame.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
-fn render_status(frame: &mut Frame, app: &App<impl Client>, area: Rect) {
+/// Shorten a model id to its last path segment for the glanceable status row
+/// (e.g. `moonshotai/Kimi-K2.7-Code` → `Kimi-K2.7-Code`).
+fn short_model(model: &str) -> String {
+    model.rsplit('/').next().unwrap_or(model).to_string()
+}
+
+/// Status row above the input: connection + session on the left, model + provider on the right.
+fn render_status_row(frame: &mut Frame, app: &App<impl Client>, area: Rect, p: Palette) {
     let status_color = match app.status {
-        AppStatus::Connected => Color::Green,
-        AppStatus::Running => Color::Yellow,
-        AppStatus::WaitingForApproval => Color::Red,
-        AppStatus::Disconnected => Color::Gray,
+        AppStatus::Connected => p.success,
+        AppStatus::Running => p.warning,
+        AppStatus::WaitingForApproval => p.error,
+        AppStatus::Disconnected => p.muted,
     };
     let session_id = app.session_id.as_deref().unwrap_or("none");
-    let status_line = Line::from(vec![
-        Span::raw("status: "),
-        Span::styled(app.status.as_str(), Style::default().fg(status_color)),
-        Span::raw(" | session: "),
-        Span::styled(session_id.to_string(), Style::default().fg(Color::Cyan)),
-        Span::raw(" | model: "),
-        Span::styled(app.model.clone(), Style::default().fg(Color::Magenta)),
-        Span::raw(" | provider: "),
-        Span::styled(app.provider.clone(), Style::default().fg(Color::Magenta)),
+    let muted = Style::default().fg(p.muted);
+
+    let left = Line::from(vec![
+        Span::styled(
+            format!(" {}", app.status.as_str()),
+            Style::default().fg(status_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  ·  {session_id}"), muted),
     ]);
-    frame.render_widget(Paragraph::new(Text::from(status_line)), area);
+    let right = Line::from(vec![
+        Span::styled(short_model(&app.model), Style::default().fg(p.secondary)),
+        Span::styled(format!("  ·  {} ", app.provider), muted),
+    ]);
+    // Split so the long model/provider on the right can't overwrite the left.
+    let halves = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+    frame.render_widget(Paragraph::new(left), halves[0]);
+    frame.render_widget(Paragraph::new(right).alignment(Alignment::Right), halves[1]);
+}
+
+/// Footer below the input: key hints, with an animated spinner while a turn runs.
+fn render_footer(frame: &mut Frame, app: &App<impl Client>, area: Rect, p: Palette) {
+    let muted = Style::default().fg(p.muted);
+    let line = match app.status {
+        AppStatus::Running => {
+            let glyphs = ["●", "◉", "○"];
+            let idx = (FRAME.fetch_add(1, Ordering::Relaxed) / 4) as usize % glyphs.len();
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} working…", glyphs[idx]),
+                    Style::default().fg(p.primary).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ·  Ctrl+C quit".to_string(), muted),
+            ])
+        }
+        AppStatus::WaitingForApproval => Line::from(Span::styled(
+            " awaiting approval — [Y]es / [N]o".to_string(),
+            Style::default().fg(p.warning),
+        )),
+        _ => Line::from(Span::styled(
+            " Enter send · /help · Ctrl+C quit".to_string(),
+            muted,
+        )),
+    };
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 /// Run the TUI event loop until the user exits.
@@ -458,9 +561,9 @@ mod tests {
         let buf = terminal.backend().buffer().clone();
 
         let text: String = buf.content.iter().map(|c| c.symbol().to_string()).collect();
-        assert!(text.contains("Input"), "input box title missing");
-        assert!(text.contains("status:"), "status label missing");
+        assert!(text.contains("connected"), "status word missing");
         assert!(text.contains("abc123"), "session id missing");
+        assert!(text.contains("hello"), "user message missing");
     }
 
     #[test]
