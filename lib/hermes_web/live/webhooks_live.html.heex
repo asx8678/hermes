@@ -1,0 +1,22 @@
+<h1>Webhooks</h1>
+
+<p>
+  Webhooks are received at <code>POST /webhooks/:connector_name</code>.
+</p>
+
+<button phx-click="refresh">Refresh</button>
+
+<table>
+  <tr>
+    <th>Connector</th>
+    <th>Path</th>
+    <th>Registered</th>
+  </tr>
+  <%= for webhook <- @webhooks do %>
+    <tr>
+      <td><%= webhook.name %></td>
+      <td><code><%= webhook.url %></code></td>
+      <td><%= if webhook.registered, do: "Yes", else: "No" %></td>
+    </tr>
+  <% end %>
+</table>

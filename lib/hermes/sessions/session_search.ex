@@ -337,7 +337,8 @@ defmodule Hermes.Sessions.SessionSearch do
   defp session_search_schema do
     %{
       name: "session_search",
-      description: "Search across sessions and messages using FTS5, scroll within a session, or browse recent sessions.",
+      description:
+        "Search across sessions and messages using FTS5, scroll within a session, or browse recent sessions.",
       parameters: %{
         type: "object",
         properties: %{

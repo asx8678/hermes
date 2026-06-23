@@ -184,7 +184,8 @@ where
 }
 
 async fn graceful_shutdown(shared: SharedBeam) -> Result<()> {
-    if let Some(mut beam) = shared.lock().take() {
+    let beam = shared.lock().take();
+    if let Some(mut beam) = beam {
         beam.shutdown().await?;
     }
     Ok(())

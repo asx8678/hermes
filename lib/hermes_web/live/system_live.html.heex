@@ -1,0 +1,56 @@
+<h1>System</h1>
+
+<div class="system-controls">
+  <%= if @paused do %>
+    <span class="status paused">Paused</span>
+    <button phx-click="resume">Resume</button>
+  <% else %>
+    <span class="status running">Running</span>
+    <button phx-click="pause">Pause</button>
+  <% end %>
+</div>
+
+<%= if @stats do %>
+  <table>
+    <tr>
+      <th>Metric</th>
+      <th>Value</th>
+    </tr>
+    <tr>
+      <td>Total memory</td>
+      <td><%= @stats.memory_total_kb %> KB</td>
+    </tr>
+    <tr>
+      <td>Processes memory</td>
+      <td><%= @stats.memory_processes_kb %> KB</td>
+    </tr>
+    <tr>
+      <td>Binary memory</td>
+      <td><%= @stats.memory_binary_kb %> KB</td>
+    </tr>
+    <tr>
+      <td>ETS memory</td>
+      <td><%= @stats.memory_ets_kb %> KB</td>
+    </tr>
+    <tr>
+      <td>Process count</td>
+      <td><%= @stats.process_count %></td>
+    </tr>
+    <tr>
+      <td>Schedulers online</td>
+      <td><%= @stats.scheduler_count %></td>
+    </tr>
+    <tr>
+      <td>Uptime</td>
+      <td><%= @stats.uptime_ms %> ms</td>
+    </tr>
+    <tr>
+      <td>Total reductions</td>
+      <td><%= @stats.reductions %></td>
+    </tr>
+  </table>
+<% end %>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

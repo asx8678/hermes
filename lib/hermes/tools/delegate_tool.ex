@@ -7,8 +7,8 @@ defmodule Hermes.Tools.DelegateTool do
   per-session fault-isolation architecture.
   """
 
-  @default_model "claude-sonnet-4-20250514"
-  @default_provider :anthropic
+  @default_model "moonshotai/Kimi-K2.7-Code"
+  @default_provider :openai
 
   @doc """
   Returns the tool entries for registration.

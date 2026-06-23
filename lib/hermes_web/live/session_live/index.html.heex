@@ -9,6 +9,9 @@
     <th>Model</th>
     <th>Status</th>
     <th>Messages</th>
+    <th>Token Usage</th>
+    <th>Cost</th>
+    <th>Started At</th>
     <th></th>
   </tr>
   <%= for session <- @sessions do %>
@@ -18,6 +21,9 @@
       <td><%= session.model %></td>
       <td><%= session.status %></td>
       <td><%= session.message_count %></td>
+      <td><%= session.token_count %></td>
+      <td>$<%= :erlang.float_to_binary(session.estimated_cost_usd / 1, decimals: 4) %></td>
+      <td><%= format_started_at(session.started_at) %></td>
       <td><a href={~p"/sessions/#{session.id}"}>Connect</a></td>
     </tr>
   <% end %>

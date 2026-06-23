@@ -1,0 +1,35 @@
+<h1>Logs</h1>
+
+<div>
+  <button phx-click="clear">Clear</button>
+  <%= if @paused do %>
+    <button phx-click="resume">Resume</button>
+  <% else %>
+    <button phx-click="pause">Pause</button>
+  <% end %>
+</div>
+
+<form phx-submit="filter" phx-change="filter">
+  <label>
+    Filter
+    <input type="text" name="filter" value={@filter} placeholder="event or message" />
+  </label>
+  <button type="submit">Apply</button>
+</form>
+
+<p>Showing <%= length(HermesWeb.LogsLive.filtered_logs(@logs, @filter)) %> / <%= length(@logs) %> entries</p>
+
+<table>
+  <tr>
+    <th>Timestamp</th>
+    <th>Event</th>
+    <th>Message</th>
+  </tr>
+  <%= for log <- HermesWeb.LogsLive.filtered_logs(@logs, @filter) do %>
+    <tr>
+      <td><%= Calendar.strftime(log.timestamp, "%Y-%m-%d %H:%M:%S") %></td>
+      <td><%= log.event %></td>
+      <td><pre><%= log.message %></pre></td>
+    </tr>
+  <% end %>
+</table>

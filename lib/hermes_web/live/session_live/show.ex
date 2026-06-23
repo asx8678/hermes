@@ -10,6 +10,8 @@ defmodule HermesWeb.SessionLive.Show do
   alias Hermes.Sessions.SessionServer
   alias Hermes.Sessions.Store
 
+  require Logger
+
   @impl true
   def mount(%{"id" => session_id}, _session, socket) do
     if connected?(socket) do
@@ -17,7 +19,7 @@ defmodule HermesWeb.SessionLive.Show do
     end
 
     session = load_session(session_id)
-    messages = Store.list_messages(session_id)
+    messages = list_messages(session_id)
     providers = Catalog.list_providers()
     models = Catalog.list_models(to_string(session.provider))
 
@@ -44,7 +46,11 @@ defmodule HermesWeb.SessionLive.Show do
 
       case Sessions.run_turn_async(session_id, text) do
         :ok ->
-          user_msg = %{role: "user", content: text, timestamp: System.system_time(:millisecond) / 1000.0}
+          user_msg = %{
+            role: "user",
+            content: text,
+            timestamp: System.system_time(:millisecond) / 1000.0
+          }
 
           {:noreply,
            assign(socket,
@@ -74,7 +80,11 @@ defmodule HermesWeb.SessionLive.Show do
      )}
   end
 
-  def handle_event("set_config", %{"config" => %{"provider" => provider, "model" => model}}, socket) do
+  def handle_event(
+        "set_config",
+        %{"config" => %{"provider" => provider, "model" => model}},
+        socket
+      ) do
     session_id = socket.assigns.session_id
 
     case SessionServer.set_config(session_id, %{"provider" => provider, "model" => model}) do
@@ -98,14 +108,18 @@ defmodule HermesWeb.SessionLive.Show do
 
     {:noreply,
      assign(socket,
-       messages: Store.list_messages(session_id),
+       messages: list_messages(session_id),
        streaming: nil,
        session: load_session(session_id)
      )}
   end
 
   def handle_info({:turn_error, %{error: error}}, socket) do
-    error_msg = %{role: "error", content: to_string(error), timestamp: System.system_time(:millisecond) / 1000.0}
+    error_msg = %{
+      role: "error",
+      content: to_string(error),
+      timestamp: System.system_time(:millisecond) / 1000.0
+    }
 
     {:noreply,
      assign(socket,
@@ -120,14 +134,25 @@ defmodule HermesWeb.SessionLive.Show do
     {:noreply, assign(socket, session: session, models: Catalog.list_models(to_string(provider)))}
   end
 
-  def handle_info({:session_status, session_id, status}, socket) when session_id == socket.assigns.session_id do
+  def handle_info({:session_status, session_id, status}, socket)
+      when session_id == socket.assigns.session_id do
     {:noreply, assign(socket, :session, %{socket.assigns.session | status: status})}
   end
 
   defp load_session(session_id) do
     case SessionServer.whereis(session_id) do
       nil ->
-        persisted = List.first(Store.list_sessions() |> Enum.filter(&(&1.id == session_id)))
+        persisted_sessions =
+          case Store.list_sessions() do
+            {:error, reason} ->
+              Logger.warning("SessionLive.Show failed to list persisted sessions: #{reason}")
+              []
+
+            sessions ->
+              sessions
+          end
+
+        persisted = List.first(persisted_sessions |> Enum.filter(&(&1.id == session_id)))
 
         case persisted do
           nil ->
@@ -153,6 +178,17 @@ defmodule HermesWeb.SessionLive.Show do
           status: state.status,
           message_count: length(state.messages)
         }
+    end
+  end
+
+  defp list_messages(session_id) do
+    case Store.list_messages(session_id) do
+      {:error, reason} ->
+        Logger.warning("SessionLive.Show failed to list messages: #{reason}")
+        []
+
+      messages ->
+        messages
     end
   end
 

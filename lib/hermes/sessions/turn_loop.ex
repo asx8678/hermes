@@ -21,14 +21,10 @@ defmodule Hermes.Sessions.TurnLoop do
     near `max_iterations`.
   - API-error classification (`Hermes.Sessions.ErrorClassifier`) with
     retry/backoff and context-compression recovery.
-
-  ## Still simplified
-
-  - Prompt caching (`apply_anthropic_cache_control`) is skipped — later milestone.
-  - Codex ack continuation loops are skipped — Anthropic-only mode.
-  - Thinking-only prefill recovery, empty-response retries and fallback
-    providers are skipped — later milestone.
-  - Plugin pre/post LLM hooks and middleware are skipped — not ported.
+  - Prompt caching via `Hermes.Sessions.PromptCaching` for Anthropic providers.
+  - Codex ack continuation loops for `codex_responses` API mode.
+  - Thinking-only prefill recovery and empty-response retries.
+  - Plugin pre/post LLM hooks via `Hermes.Plugins.LLMHook`.
   """
 
   alias Hermes.Providers.Types.NormalizedResponse
@@ -105,7 +101,12 @@ defmodule Hermes.Sessions.TurnLoop do
       budget_grace_call: budget_grace_call,
       final_response: nil,
       exit_reason: initial_exit_reason(budget, budget_grace_call),
-      error_message: nil
+      error_message: nil,
+      # Codex-style intermediate-ack continuation counter.
+      codex_ack_continuations: 0,
+      # Recovery counters for thinking-only prefill and empty responses.
+      thinking_prefill_retries: 0,
+      empty_content_retries: 0
     }
 
     loop(initial_state)
@@ -162,11 +163,23 @@ defmodule Hermes.Sessions.TurnLoop do
   # ---------------------------------------------------------------------------
 
   defp do_turn(state) do
+    tool_schemas = if state.tools == [], do: nil, else: state.tools
+
     # Compress older history if it is about to exceed the model's context window.
     state = Hermes.Sessions.Compaction.maybe_compress(state)
 
     api_messages = prepare_api_messages(state.messages, state.system_prompt)
-    tool_schemas = if state.tools == [], do: nil, else: state.tools
+
+    # Apply Anthropic prompt caching — matches `agent/conversation_loop.py:817-822`.
+    api_messages =
+      if state.provider == Hermes.Providers.Anthropic or state.api_mode == "anthropic_messages" do
+        Hermes.Sessions.PromptCaching.apply_cache_control(api_messages,
+          cache_ttl: Application.get_env(:hermes, :cache_ttl, "5m"),
+          native_anthropic: state.api_mode == "anthropic_messages"
+        )
+      else
+        api_messages
+      end
 
     provider_opts = [
       tools: tool_schemas,
@@ -176,9 +189,14 @@ defmodule Hermes.Sessions.TurnLoop do
       stream_to: state.stream_to
     ]
 
+    # Invoke plugin pre_llm_call hooks before the provider call.
+    state = run_pre_llm_hooks(state)
+
     try do
       case state.provider.stream(state.model, api_messages, provider_opts, state.finch_name) do
         {:ok, %NormalizedResponse{} = response} ->
+          # Invoke plugin post_llm_call hooks after a successful provider call.
+          {state, response} = run_post_llm_hooks(state, response)
           handle_response(state, response)
 
         {:error, reason} ->
@@ -414,12 +432,48 @@ defmodule Hermes.Sessions.TurnLoop do
   # Final response path
   # ---------------------------------------------------------------------------
 
-  defp handle_final_response(state, %NormalizedResponse{content: content}) do
+  defp handle_final_response(
+         state,
+         %NormalizedResponse{content: content, reasoning: reasoning} = response
+       ) do
     final_response = strip_think_blocks(content || "") |> String.trim()
-    assistant_msg = %{role: "assistant", content: final_response}
-    state = %{state | messages: state.messages ++ [assistant_msg]}
+    has_inline_thinking = has_inline_thinking?(content || "")
+    has_structured = not is_nil(reasoning) or has_inline_thinking
 
-    finalize(%{state | final_response: final_response, exit_reason: "text_response"})
+    # Codex ack continuation — `agent/conversation_loop.py:4423-4449`.
+    if state.api_mode == "codex_responses" and
+         state.codex_ack_continuations < 2 and
+         not looks_like_tool_call?(response) and
+         looks_like_codex_intermediate_ack?(state.messages, final_response) do
+      codex_ack_continuation(state, response, final_response)
+    else
+      # Thinking-only prefill recovery — `agent/conversation_loop.py:4289-4306`.
+      if has_structured and final_response == "" and state.thinking_prefill_retries < 2 do
+        thinking_prefill_recovery(state, response)
+      else
+        # Empty response retry — `agent/conversation_loop.py:4324-4335`.
+        prefill_exhausted = has_structured and state.thinking_prefill_retries >= 2
+        truly_empty = final_response == ""
+
+        if truly_empty and (not has_structured or prefill_exhausted) and
+             state.empty_content_retries < 3 do
+          empty_content_retry(state)
+        else
+          # Reset recovery counters on a successful final response.
+          state = %{
+            state
+            | thinking_prefill_retries: 0,
+              empty_content_retries: 0,
+              codex_ack_continuations: 0
+          }
+
+          assistant_msg = %{role: "assistant", content: final_response}
+          state = %{state | messages: state.messages ++ [assistant_msg]}
+
+          finalize(%{state | final_response: final_response, exit_reason: "text_response"})
+        end
+      end
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -446,7 +500,13 @@ defmodule Hermes.Sessions.TurnLoop do
       loop(state)
     else
       message = "Error during API call #{state.api_call_count}: #{classified.message}"
-      handle_outer_error(state, message)
+
+      if classified.retryable do
+        handle_outer_error(state, message)
+      else
+        state = fill_missing_tool_results(state, message)
+        finalize(%{state | error_message: message, exit_reason: "non_retryable_error"})
+      end
     end
   end
 
@@ -622,6 +682,183 @@ defmodule Hermes.Sessions.TurnLoop do
     content
     |> String.replace(~r/<thinking>.*?<\/thinking>/s, "")
     |> String.replace(~r/<reasoning>.*?<\/reasoning>/s, "")
+  end
+
+  # Detect in-content <thinking> blocks used by some local models.
+  defp has_inline_thinking?(content) do
+    Regex.match?(~r/<thinking>.*?<\/thinking>/s, content) or
+      Regex.match?(~r/<reasoning>.*?<\/reasoning>/s, content)
+  end
+
+  defp looks_like_tool_call?(%NormalizedResponse{
+         tool_calls: tool_calls,
+         finish_reason: finish_reason
+       }) do
+    finish_reason == "tool_calls" or not is_nil(tool_calls)
+  end
+
+  # Codex-style intermediate-ack detection, ported from
+  # `agent/agent_runtime_helpers.py:2126-2195`.
+  defp looks_like_codex_intermediate_ack?(messages, assistant_content) do
+    has_tool_message? = Enum.any?(messages, &match?(%{role: "tool"}, &1))
+
+    if has_tool_message? do
+      false
+    else
+      assistant_text =
+        assistant_content
+        |> strip_think_blocks()
+        |> String.trim()
+        |> String.downcase()
+
+      if assistant_text == "" or String.length(assistant_text) > 1200 do
+        false
+      else
+        has_future_ack =
+          Regex.match?(
+            ~r/\b(i['']ll|i will|let me|i can do that|i can help with that)\b/,
+            assistant_text
+          )
+
+        if not has_future_ack do
+          false
+        else
+          action_markers = [
+            "look into",
+            "look at",
+            "inspect",
+            "scan",
+            "check",
+            "analyz",
+            "review",
+            "explore",
+            "read",
+            "open",
+            "run",
+            "test",
+            "fix",
+            "debug",
+            "search",
+            "find",
+            "walkthrough",
+            "report back",
+            "summarize"
+          ]
+
+          workspace_markers = [
+            "directory",
+            "current directory",
+            "current dir",
+            "cwd",
+            "repo",
+            "repository",
+            "codebase",
+            "project",
+            "folder",
+            "filesystem",
+            "file tree",
+            "files",
+            "path"
+          ]
+
+          user_message = find_last_user_message(messages) || ""
+          user_text = user_message |> String.trim() |> String.downcase()
+
+          user_targets_workspace =
+            Enum.any?(workspace_markers, fn marker -> marker in user_text end) or
+              String.contains?(user_text, "~/") or
+              String.contains?(user_text, "/")
+
+          assistant_mentions_action =
+            Enum.any?(action_markers, fn marker -> marker in assistant_text end)
+
+          assistant_targets_workspace =
+            Enum.any?(workspace_markers, fn marker -> marker in assistant_text end)
+
+          (user_targets_workspace or assistant_targets_workspace) and
+            assistant_mentions_action
+        end
+      end
+    end
+  end
+
+  defp find_last_user_message(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      %{"role" => "user", "content" => content} when is_binary(content) -> content
+      %{role: "user", content: content} when is_binary(content) -> content
+      _ -> nil
+    end)
+  end
+
+  defp codex_ack_continuation(state, response, _final_response) do
+    state = %{state | codex_ack_continuations: state.codex_ack_continuations + 1}
+
+    interim_msg = build_assistant_message(response, "incomplete")
+    interim_msg = Map.put(interim_msg, "_thinking_prefill", true)
+
+    continue_msg = %{
+      role: "user",
+      content:
+        "[System: Continue now. Execute the required tool calls and only " <>
+          "send your final answer after completing the task.]"
+    }
+
+    state = %{state | messages: state.messages ++ [interim_msg, continue_msg]}
+    loop(state)
+  end
+
+  defp thinking_prefill_recovery(state, response) do
+    state = %{state | thinking_prefill_retries: state.thinking_prefill_retries + 1}
+
+    Logger.info(
+      "Thinking-only response (no visible content) — prefilling to continue " <>
+        "(#{state.thinking_prefill_retries}/2)"
+    )
+
+    interim_msg = build_assistant_message(response, "incomplete")
+    interim_msg = Map.put(interim_msg, "_thinking_prefill", true)
+    state = %{state | messages: state.messages ++ [interim_msg]}
+    loop(state)
+  end
+
+  defp empty_content_retry(state) do
+    state = %{state | empty_content_retries: state.empty_content_retries + 1}
+
+    Logger.warning(
+      "Empty response (no content or reasoning) — retry #{state.empty_content_retries}/3"
+    )
+
+    loop(state)
+  end
+
+  # ---------------------------------------------------------------------------
+  # Plugin hooks
+  # ---------------------------------------------------------------------------
+
+  defp run_pre_llm_hooks(state) do
+    hooks = Application.get_env(:hermes, :llm_hooks, [])
+
+    Enum.reduce(hooks, state, fn hook, acc ->
+      if Code.ensure_loaded?(hook) and function_exported?(hook, :pre_llm_call, 1) do
+        hook.pre_llm_call(acc)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp run_post_llm_hooks(state, response) do
+    hooks = Application.get_env(:hermes, :llm_hooks, [])
+
+    Enum.reduce(hooks, {state, response}, fn hook, {acc_state, acc_response} ->
+      if Code.ensure_loaded?(hook) and function_exported?(hook, :post_llm_call, 2) do
+        hook.post_llm_call(acc_state, acc_response)
+      else
+        {acc_state, acc_response}
+      end
+    end)
   end
 
   # Backoff duration (ms) keyed by classified error reason.

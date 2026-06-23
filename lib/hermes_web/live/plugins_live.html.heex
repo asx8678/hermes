@@ -1,0 +1,32 @@
+<h1>Plugins</h1>
+
+<button phx-click="refresh">Refresh</button>
+
+<%= if @hooks == [] do %>
+  <p>No LLM hooks installed. Register modules via <code>:llm_hooks</code> in the application config.</p>
+<% else %>
+  <table>
+    <tr>
+      <th>Module</th>
+      <th>pre_llm_call/1</th>
+      <th>post_llm_call/2</th>
+      <th></th>
+    </tr>
+    <%= for hook <- @hooks do %>
+      <tr>
+        <td><%= hook.module %></td>
+        <td><%= if hook.pre_exported, do: "Yes", else: "No" %></td>
+        <td><%= if hook.post_exported, do: "Yes", else: "No" %></td>
+        <td>
+          <button phx-click="toggle_details" phx-value-module={hook.module}>
+            <%= if hook.module in @expanded, do: "Hide", else: "Details" %>
+          </button>
+        </td>
+      </tr>
+    <% end %>
+  </table>
+<% end %>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

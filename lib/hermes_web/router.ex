@@ -16,6 +16,22 @@ defmodule HermesWeb.Router do
 
     live "/dashboard", SessionLive.Index
     live "/sessions/:id", SessionLive.Show
+    live "/files", FilesLive
+    live "/skills", SkillsLive
+    live "/models", ModelsLive
+    live "/cron", CronLive
+    live "/logs", LogsLive
+    live "/analytics", AnalyticsLive
+    live "/channels", ChannelsLive
+    live "/webhooks", WebhooksLive
+    live "/config", ConfigLive
+    live "/memory", MemoryLive
+    live "/profile", ProfileLive
+    live "/system", SystemLive
+    live "/plugins", PluginsLive
+    live "/mcp", MCPLive
+    live "/docs", DocsLive
+    live "/chat", ChatLive
   end
 
   scope "/api", HermesWeb do

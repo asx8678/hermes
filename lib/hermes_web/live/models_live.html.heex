@@ -1,0 +1,98 @@
+<h1>Models &amp; Providers</h1>
+
+<%= if @error do %>
+  <p style="color: red;"><%= @error %></p>
+<% end %>
+
+<h2>Providers</h2>
+
+<table>
+  <tr>
+    <th>Name</th>
+    <th>Label</th>
+    <th>Kind</th>
+    <th>Base URL</th>
+    <th>API Key Env</th>
+    <th></th>
+  </tr>
+  <%= for provider <- @providers do %>
+    <tr>
+      <td><%= provider.name %></td>
+      <td><%= provider.label %></td>
+      <td><%= provider.kind %></td>
+      <td><%= provider.base_url || "-" %></td>
+      <td><%= provider.api_key_env || "-" %></td>
+      <td>
+        <button phx-click="select_provider" phx-value-name={provider.name}>Select</button>
+        <%= unless provider.builtin do %>
+          <button phx-click="remove_provider" phx-value-name={provider.name}>Remove</button>
+        <% end %>
+      </td>
+    </tr>
+  <% end %>
+</table>
+
+<h3>Add Provider</h3>
+<form phx-submit="add_provider">
+  <input type="text" name="name" placeholder="Name" required />
+  <input type="text" name="label" placeholder="Label" />
+  <select name="kind">
+    <option value="openai">openai</option>
+    <option value="anthropic">anthropic</option>
+    <option value="mock">mock</option>
+  </select>
+  <input type="text" name="base_url" placeholder="Base URL" />
+  <input type="text" name="api_key_env" placeholder="API Key Env Var" />
+  <button type="submit">Add Provider</button>
+</form>
+
+<h2>Models<%= if @selected_provider, do: " for #{@selected_provider}", else: "" %></h2>
+
+<table>
+  <tr>
+    <th>Provider</th>
+    <th>Model ID</th>
+    <th>Label</th>
+    <th>Context Window</th>
+    <th>Max Output</th>
+    <th>Tools</th>
+    <th>Reasoning</th>
+    <th>Default</th>
+    <th></th>
+  </tr>
+  <%= for model <- @models do %>
+    <tr>
+      <td><%= model.provider_name %></td>
+      <td><%= model.model_id %></td>
+      <td><%= model.label %></td>
+      <td><%= model.context_window %></td>
+      <td><%= model.max_output_tokens %></td>
+      <td><%= model.supports_tools %></td>
+      <td><%= model.supports_reasoning %></td>
+      <td><%= model.is_default %></td>
+      <td>
+        <%= unless model.builtin do %>
+          <button phx-click="remove_model" phx-value-provider={model.provider_name} phx-value-model={model.model_id}>Remove</button>
+        <% end %>
+      </td>
+    </tr>
+  <% end %>
+</table>
+
+<h3>Add Model</h3>
+<form phx-submit="add_model">
+  <select name="provider_name" required>
+    <option value="">Provider</option>
+    <%= for provider <- @providers do %>
+      <option value={provider.name} selected={provider.name == @selected_provider}><%= provider.name %></option>
+    <% end %>
+  </select>
+  <input type="text" name="model_id" placeholder="Model ID" required />
+  <input type="text" name="label" placeholder="Label" />
+  <input type="number" name="context_window" value="128000" />
+  <input type="number" name="max_output_tokens" value="16384" />
+  <label><input type="checkbox" name="supports_tools" value="true" /> Tools</label>
+  <label><input type="checkbox" name="supports_reasoning" value="true" /> Reasoning</label>
+  <label><input type="checkbox" name="is_default" value="true" /> Default</label>
+  <button type="submit">Add Model</button>
+</form>

@@ -313,6 +313,16 @@ defmodule Hermes.Tools.WebTool do
   defp fetch_url(_url, redirects) when redirects > 5, do: {:error, :too_many_redirects}
 
   defp fetch_url(url, redirects) do
+    case validate_url(url) do
+      {:ok, uri} ->
+        do_fetch(uri, url, redirects)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp do_fetch(_uri, url, redirects) do
     headers = [
       {"User-Agent", @user_agent},
       {"Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
@@ -342,6 +352,66 @@ defmodule Hermes.Tools.WebTool do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # SSRF guard: validate scheme and host before making any request.
+  # Blocks non-http(s) schemes, loopback, link-local, and cloud metadata IPs.
+  defp validate_url(url) when is_binary(url) do
+    uri = URI.parse(url)
+
+    cond do
+      uri.scheme not in ["http", "https"] ->
+        {:error, :blocked_scheme}
+
+      uri.userinfo != nil and uri.userinfo != "" ->
+        {:error, :blocked_userinfo}
+
+      uri.host == nil or uri.host == "" ->
+        {:error, :missing_host}
+
+      blocked_host?(uri.host) ->
+        {:error, :blocked_host}
+
+      true ->
+        {:ok, uri}
+    end
+  end
+
+  defp validate_url(_), do: {:error, :invalid_url}
+
+  # Match loopback, link-local, and cloud metadata endpoints by host string.
+  # This is a literal-string check — it does not resolve DNS, so a domain
+  # that resolves to 127.0.0.1 would pass. This blocks the obvious vectors;
+  # a production deployment should add DNS-resolution checks if untrusted
+  # URLs are accepted.
+  defp blocked_host?(host) do
+    host_lower = String.downcase(host)
+
+    host_lower == "localhost" or
+      String.starts_with?(host_lower, "127.") or
+      host_lower == "::1" or
+      host_lower == "[::1]" or
+      String.starts_with?(host_lower, "169.254.") or
+      String.starts_with?(host_lower, "0.0.0.0") or
+      String.starts_with?(host_lower, "10.") or
+      String.starts_with?(host_lower, "192.168.") or
+      String.starts_with?(host_lower, "172.16.") or
+      String.starts_with?(host_lower, "172.17.") or
+      String.starts_with?(host_lower, "172.18.") or
+      String.starts_with?(host_lower, "172.19.") or
+      String.starts_with?(host_lower, "172.20.") or
+      String.starts_with?(host_lower, "172.21.") or
+      String.starts_with?(host_lower, "172.22.") or
+      String.starts_with?(host_lower, "172.23.") or
+      String.starts_with?(host_lower, "172.24.") or
+      String.starts_with?(host_lower, "172.25.") or
+      String.starts_with?(host_lower, "172.26.") or
+      String.starts_with?(host_lower, "172.27.") or
+      String.starts_with?(host_lower, "172.28.") or
+      String.starts_with?(host_lower, "172.29.") or
+      String.starts_with?(host_lower, "172.30.") or
+      String.starts_with?(host_lower, "172.31.") or
+      String.starts_with?(host_lower, "::ffff:127.")
   end
 
   defp get_header(headers, name) do

@@ -140,12 +140,16 @@ defmodule Hermes.Catalog.Provider do
 
   defp encrypt_with_key(plain_text, key) do
     iv = :crypto.strong_rand_bytes(@iv_len)
-    {cipher, tag} = :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plain_text, "", @tag_len, true)
+
+    {cipher, tag} =
+      :crypto.crypto_one_time_aead(:aes_256_gcm, key, iv, plain_text, "", @tag_len, true)
+
     @encrypted_prefix <> Base.encode64(iv <> tag <> cipher)
   end
 
   defp fetch_encrypt_key do
-    case Application.get_env(:hermes, :catalog_encrypt_key) || System.get_env("HERMES_CATALOG_ENCRYPT_KEY") do
+    case Application.get_env(:hermes, :catalog_encrypt_key) ||
+           System.get_env("HERMES_CATALOG_ENCRYPT_KEY") do
       nil ->
         nil
 

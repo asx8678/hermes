@@ -216,12 +216,9 @@ impl BeamProcess {
         .await;
 
         // 2. Wait up to `stop_wait` for the child to exit on its own.
-        match timeout(stop_wait, self.child.wait()).await {
-            Ok(Ok(_status)) => {
-                self.verify_no_orphans();
-                return Ok(());
-            }
-            _ => {}
+        if let Ok(Ok(_status)) = timeout(stop_wait, self.child.wait()).await {
+            self.verify_no_orphans();
+            return Ok(());
         }
 
         // 3. SIGTERM the whole tree.
@@ -229,12 +226,9 @@ impl BeamProcess {
             let _ = kill_tree(pid, "TERM");
         }
 
-        match timeout(term_wait, self.child.wait()).await {
-            Ok(Ok(_status)) => {
-                self.verify_no_orphans();
-                return Ok(());
-            }
-            _ => {}
+        if let Ok(Ok(_status)) = timeout(term_wait, self.child.wait()).await {
+            self.verify_no_orphans();
+            return Ok(());
         }
 
         // 4. SIGKILL fallback.

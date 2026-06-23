@@ -1,0 +1,36 @@
+<h1>Files</h1>
+
+<%= if @error do %>
+  <p style="color: red;"><%= @error %></p>
+<% end %>
+
+<form phx-submit="search">
+  <label>
+    Pattern
+    <input type="text" name="pattern" value={@pattern} placeholder="*.ex" />
+  </label>
+  <button type="submit">Search</button>
+</form>
+
+<form phx-submit="change_path">
+  <label>
+    Path
+    <input type="text" name="path" value={@root} />
+  </label>
+  <button type="submit">Change Path</button>
+</form>
+
+<p>Browsing: <%= @root %></p>
+
+<table>
+  <tr>
+    <th>Name</th>
+    <th>Path</th>
+  </tr>
+  <%= for file <- @files do %>
+    <tr>
+      <td><%= file.name %></td>
+      <td><%= file.path %></td>
+    </tr>
+  <% end %>
+</table>

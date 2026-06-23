@@ -1,3 +1,5 @@
+require Logger
+
 defmodule Hermes.Sessions.SessionServer do
   @moduledoc """
   Per-conversation session GenServer.
@@ -151,13 +153,20 @@ defmodule Hermes.Sessions.SessionServer do
     Process.flag(:trap_exit, true)
     Registry.register(Hermes.Sessions.Registry, {__MODULE__, session_id}, nil)
 
-    Store.create_session(session_id,
-      source: source,
-      model: model,
-      parent_session_id: Keyword.get(opts, :parent_session_id)
-    )
+    case Store.create_session(session_id,
+           source: source,
+           model: model,
+           parent_session_id: Keyword.get(opts, :parent_session_id)
+         ) do
+      {:error, reason} -> Logger.warning("SessionServer create_session failed: #{reason}")
+      :ok -> :ok
+    end
 
-    Store.persist_messages(session_id, messages)
+    case Store.persist_messages(session_id, messages) do
+      {:error, reason} -> Logger.warning("SessionServer persist_messages failed: #{reason}")
+      :ok -> :ok
+    end
+
     broadcast_session_started(state)
     {:ok, state}
   end
@@ -234,7 +243,13 @@ defmodule Hermes.Sessions.SessionServer do
 
       # Persist the user message now; the turn's outputs are persisted as a
       # value-delta on completion (robust to context compression).
-      Store.persist_messages(state.session_id, [user_msg])
+      case Store.persist_messages(state.session_id, [user_msg]) do
+        {:error, reason} ->
+          Logger.warning("SessionServer persist_messages failed: #{reason}")
+
+        :ok ->
+          :ok
+      end
 
       Task.start(fn -> run_turn_in_task(session_pid, new_state) end)
 
@@ -249,7 +264,14 @@ defmodule Hermes.Sessions.SessionServer do
     # Persist only the messages added this turn (value-delta), so context
     # compression rewriting the in-memory list never re-persists old history.
     new_messages = result.messages -- state.messages
-    Store.persist_messages(state.session_id, new_messages)
+
+    case Store.persist_messages(state.session_id, new_messages) do
+      {:error, reason} ->
+        Logger.warning("SessionServer persist_messages failed: #{reason}")
+
+      :ok ->
+        :ok
+    end
 
     new_state = %{
       state

@@ -19,7 +19,6 @@ defmodule Hermes.Sessions.ErrorClassifier do
   than aborting the turn immediately.
   """
 
-
   @type classified :: %{
           reason: atom(),
           retryable: boolean(),
@@ -360,7 +359,6 @@ defmodule Hermes.Sessions.ErrorClassifier do
     if is_binary(code) or is_atom(code), do: to_string(code), else: ""
   end
 
-
   # ── Status code classification ────────────────────────────────────────────
 
   defp classify_by_status(nil, _error_msg, _error_code, _body), do: nil
@@ -451,7 +449,8 @@ defmodule Hermes.Sessions.ErrorClassifier do
       long_context_beta_forbidden?(error_msg) ->
         result(@reason_context_overflow, retryable: true, should_compress: true)
 
-      request_validation?(error_msg) or error_code in ["unknown_parameter", "unsupported_parameter"] ->
+      request_validation?(error_msg) or
+          error_code in ["unknown_parameter", "unsupported_parameter"] ->
         result(@reason_format_error, retryable: false)
 
       image_too_large?(error_msg) ->

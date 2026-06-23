@@ -226,7 +226,14 @@ defmodule Hermes.Tools.FileTools do
     if String.contains?(path, "..") or String.contains?(path, "//") do
       {:error, "path contains unsafe traversal components"}
     else
-      :ok
+      workspace_root = Application.get_env(:hermes, :workspace_root, File.cwd!())
+      expanded = Path.expand(path, workspace_root)
+
+      if String.starts_with?(expanded, workspace_root) do
+        :ok
+      else
+        {:error, "path must be within the workspace root"}
+      end
     end
   end
 
@@ -264,53 +271,61 @@ defmodule Hermes.Tools.FileTools do
   end
 
   defp find_files(root, pattern, limit) do
-    root
-    |> Path.join("**/*")
-    |> Path.wildcard()
-    |> Stream.filter(&File.regular?/1)
-    |> Stream.filter(fn path -> String.contains?(Path.basename(path), pattern) end)
-    |> Enum.take(limit)
-    |> Enum.map(&Path.expand/1)
+    with :ok <- validate_path(root) do
+      root
+      |> Path.join("**/*")
+      |> Path.wildcard()
+      |> Stream.filter(&File.regular?/1)
+      |> Stream.filter(fn path -> String.contains?(Path.basename(path), pattern) end)
+      |> Enum.take(limit)
+      |> Enum.map(&Path.expand/1)
+    else
+      _ -> []
+    end
   end
 
   defp grep_files(root, pattern, limit) do
-    paths =
-      if File.dir?(root) do
-        root |> Path.join("**/*") |> Path.wildcard() |> Stream.filter(&File.regular?/1)
-      else
-        [root]
-      end
+    with :ok <- validate_path(root) do
+      paths =
+        if File.dir?(root) do
+          root |> Path.join("**/*") |> Path.wildcard() |> Stream.filter(&File.regular?/1)
+        else
+          [root]
+        end
 
-    paths
-    |> Enum.reduce_while([], fn path, acc ->
-      case File.read(path) do
-        {:ok, content} ->
-          lines = String.split(content, "\n")
+      paths
+      |> Enum.reduce_while([], fn path, acc ->
+        case File.read(path) do
+          {:ok, content} ->
+            lines = String.split(content, "\n")
 
-          matches =
-            lines
-            |> Enum.with_index(1)
-            |> Enum.filter(fn {line, _idx} -> String.contains?(line, pattern) end)
-            |> Enum.map(fn {line, idx} ->
-              %{
-                "path" => Path.expand(path),
-                "line" => idx,
-                "content" => line
-              }
-            end)
+            matches =
+              lines
+              |> Enum.with_index(1)
+              |> Enum.filter(fn {line, _idx} -> String.contains?(line, pattern) end)
+              |> Enum.map(fn {line, idx} ->
+                %{
+                  "path" => Path.expand(path),
+                  "line" => idx,
+                  "content" => line
+                }
+              end)
 
-          new_acc = acc ++ matches
+            new_acc = acc ++ matches
 
-          if length(new_acc) >= limit do
-            {:halt, Enum.take(new_acc, limit)}
-          else
-            {:cont, new_acc}
-          end
+            if length(new_acc) >= limit do
+              {:halt, Enum.take(new_acc, limit)}
+            else
+              {:cont, new_acc}
+            end
 
-        _error ->
-          {:cont, acc}
-      end
-    end)
+          _error ->
+            {:cont, acc}
+        end
+      end)
+    else
+      _ -> []
+    end
   end
 
   defp always_available, do: true
@@ -388,7 +403,7 @@ defmodule Hermes.Tools.FileTools do
       parameters: %{
         type: "object",
         properties: %{
-          pattern: %{type: "string", description: "Substring or glob to search for."},
+          pattern: %{type: "string", description: "Substring match against file basename."},
           target: %{
             type: "string",
             enum: ["content", "files"],

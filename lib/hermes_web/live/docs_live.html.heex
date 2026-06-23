@@ -1,0 +1,37 @@
+<h1>Documentation</h1>
+
+<%= if @error do %>
+  <p style="color: red;"><%= @error %></p>
+<% end %>
+
+<form phx-submit="search">
+  <label>
+    Search docs
+    <input type="text" name="query" value={@query} placeholder="filename or title" />
+  </label>
+  <button type="submit">Search</button>
+  <button type="button" phx-click="clear_search">Clear</button>
+</form>
+
+<%= if @files == [] do %>
+  <p>No documentation files found in <code><%= @docs_root %></code>.</p>
+<% else %>
+  <ul>
+    <%= for file <- @files do %>
+      <li>
+        <button phx-click="select" phx-value-file={file.filename}>
+          <%= file.title %>
+        </button>
+      </li>
+    <% end %>
+  </ul>
+<% end %>
+
+<%= if @selected do %>
+  <h2><%= @selected %></h2>
+  <pre><%= @content %></pre>
+<% end %>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

@@ -1,0 +1,26 @@
+<h1>Channels</h1>
+
+<button phx-click="refresh">Refresh</button>
+
+<table>
+  <tr>
+    <th>Name</th>
+    <th>Module</th>
+    <th>Status</th>
+    <th></th>
+  </tr>
+  <%= for connector <- @connectors do %>
+    <tr>
+      <td><%= connector.label %></td>
+      <td><%= inspect(connector.module) %></td>
+      <td><%= connector.status %></td>
+      <td>
+        <%= if connector.status == :running do %>
+          <button phx-click="stop" phx-value-name={connector.name}>Stop</button>
+        <% else %>
+          <button phx-click="start" phx-value-name={connector.name}>Start</button>
+        <% end %>
+      </td>
+    </tr>
+  <% end %>
+</table>

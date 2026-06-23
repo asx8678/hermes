@@ -24,7 +24,7 @@ defmodule Hermes.Sessions.Store do
   @doc """
   Inserts the session row if it does not already exist. Idempotent.
   """
-  @spec create_session(String.t(), keyword()) :: :ok
+  @spec create_session(String.t(), keyword()) :: :ok | {:error, term()}
   def create_session(session_id, opts \\ []) when is_binary(session_id) do
     attrs = %{
       id: session_id,
@@ -42,7 +42,7 @@ defmodule Hermes.Sessions.Store do
   rescue
     error ->
       Logger.warning("Store.create_session failed: #{Exception.message(error)}")
-      :ok
+      {:error, Exception.message(error)}
   end
 
   @doc """
@@ -51,7 +51,7 @@ defmodule Hermes.Sessions.Store do
   are genuinely new this turn (computed as a value-delta), which keeps this
   correct even when context compression rewrites the in-memory history.
   """
-  @spec persist_messages(String.t(), [map()]) :: :ok
+  @spec persist_messages(String.t(), [map()]) :: :ok | {:error, term()}
   def persist_messages(_session_id, []), do: :ok
 
   def persist_messages(session_id, messages)
@@ -65,13 +65,13 @@ defmodule Hermes.Sessions.Store do
   rescue
     error ->
       Logger.warning("Store.persist_messages failed: #{Exception.message(error)}")
-      :ok
+      {:error, Exception.message(error)}
   end
 
   @doc """
   Lists persisted messages for a session, oldest first.
   """
-  @spec list_messages(String.t()) :: [map()]
+  @spec list_messages(String.t()) :: [map()] | {:error, term()}
   def list_messages(session_id) when is_binary(session_id) do
     Repo.all(
       from m in Message,
@@ -90,13 +90,15 @@ defmodule Hermes.Sessions.Store do
         }
     )
   rescue
-    _ -> []
+    error ->
+      Logger.warning("Store.list_messages failed: #{Exception.message(error)}")
+      {:error, Exception.message(error)}
   end
 
   @doc """
   Lists persisted sessions (most recent first) as dashboard-friendly maps.
   """
-  @spec list_sessions(non_neg_integer()) :: [map()]
+  @spec list_sessions(non_neg_integer()) :: [map()] | {:error, term()}
   def list_sessions(limit \\ 100) do
     Repo.all(
       from s in Session,
@@ -111,7 +113,9 @@ defmodule Hermes.Sessions.Store do
         }
     )
   rescue
-    _ -> []
+    error ->
+      Logger.warning("Store.list_sessions failed: #{Exception.message(error)}")
+      {:error, Exception.message(error)}
   end
 
   # ---------------------------------------------------------------------------

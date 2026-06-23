@@ -1,0 +1,71 @@
+<h1>MCP</h1>
+
+<button phx-click="refresh">Refresh</button>
+
+<div>
+  <h2>
+    Servers
+    <button phx-click="toggle_servers">
+      <%= if @show_servers, do: "Hide", else: "Show" %>
+    </button>
+  </h2>
+
+  <%= if @show_servers do %>
+    <%= if @servers == [] do %>
+      <p>No MCP servers configured.</p>
+    <% else %>
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Transport</th>
+          <th>URL</th>
+          <th>Status</th>
+        </tr>
+        <%= for server <- @servers do %>
+          <tr>
+            <td><%= server.name %></td>
+            <td><%= server.transport || "—" %></td>
+            <td><%= server.url || "—" %></td>
+            <td><%= server.status %></td>
+          </tr>
+        <% end %>
+      </table>
+    <% end %>
+  <% end %>
+</div>
+
+<div>
+  <h2>
+    Clients
+    <button phx-click="toggle_clients">
+      <%= if @show_clients, do: "Hide", else: "Show" %>
+    </button>
+  </h2>
+
+  <%= if @show_clients do %>
+    <%= if @clients == [] do %>
+      <p>No MCP clients configured.</p>
+    <% else %>
+      <table>
+        <tr>
+          <th>Name</th>
+          <th>Transport</th>
+          <th>URL</th>
+          <th>Status</th>
+        </tr>
+        <%= for client <- @clients do %>
+          <tr>
+            <td><%= client.name %></td>
+            <td><%= client.transport || "—" %></td>
+            <td><%= client.url || "—" %></td>
+            <td><%= client.status %></td>
+          </tr>
+        <% end %>
+      </table>
+    <% end %>
+  <% end %>
+</div>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

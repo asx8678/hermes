@@ -306,6 +306,13 @@ fn write_script(path: &std::path::Path, code: &str) -> Result<()> {
     Ok(())
 }
 
+/// # Security limitations
+///
+/// This sandbox uses `RLIMIT_AS` (Linux) / `RLIMIT_DATA` (macOS) for memory
+/// isolation. These are not robust jails: a non-privileged process can raise
+/// its own soft limit on many systems. There is no seccomp, namespace, or
+/// chroot isolation. This is a best-effort containment for development use;
+/// production deployments executing untrusted code should add seccomp/chroot.
 fn spawn_interpreter(
     interpreter: &str,
     script: &std::path::Path,
@@ -340,19 +347,19 @@ fn spawn_interpreter(
             std::os::unix::process::CommandExt::pre_exec(&mut std_cmd, move || {
                 #[cfg(target_os = "linux")]
                 {
-                    let mut lim = libc::rlimit {
+                    let lim = libc::rlimit {
                         rlim_cur: limit_bytes,
                         rlim_max: limit_bytes,
                     };
-                    let _ = libc::setrlimit(libc::RLIMIT_AS, &mut lim);
+                    let _ = libc::setrlimit(libc::RLIMIT_AS, &lim);
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    let mut lim = libc::rlimit {
+                    let lim = libc::rlimit {
                         rlim_cur: limit_bytes,
                         rlim_max: limit_bytes,
                     };
-                    let _ = libc::setrlimit(libc::RLIMIT_DATA, &mut lim);
+                    let _ = libc::setrlimit(libc::RLIMIT_DATA, &lim);
                 }
                 Ok(())
             });

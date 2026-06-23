@@ -92,7 +92,15 @@ defmodule Hermes.Tools.DispatcherTest do
         Path.join(System.tmp_dir!(), "hermes_file_test_#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(tmp_dir)
-      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+
+      prev_workspace_root = Application.get_env(:hermes, :workspace_root)
+      Application.put_env(:hermes, :workspace_root, tmp_dir)
+
+      on_exit(fn ->
+        Application.put_env(:hermes, :workspace_root, prev_workspace_root)
+        File.rm_rf!(tmp_dir)
+      end)
+
       %{tmp_dir: tmp_dir}
     end
 

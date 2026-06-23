@@ -99,7 +99,17 @@ defmodule Hermes.Tools.Registry do
       Hermes.Tools.ClarifyTool,
       Hermes.Tools.CronjobTool,
       Hermes.Tools.WebTool,
-      Hermes.Sessions.SessionSearch
+      Hermes.Sessions.SessionSearch,
+      Hermes.Tools.ProcessTool,
+      Hermes.Tools.SendMessageTool,
+      Hermes.Tools.XSearchTool,
+      Hermes.Tools.KanbanTool,
+      Hermes.Tools.BrowserTool,
+      Hermes.Tools.VisionTool,
+      Hermes.Tools.ImageGenTool,
+      Hermes.Tools.TTSTool,
+      Hermes.Tools.HATool,
+      Hermes.Tools.ComputerUseTool
     ]
 
     for mod <- builtin_modules do

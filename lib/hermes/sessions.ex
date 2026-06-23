@@ -1,3 +1,5 @@
+require Logger
+
 defmodule Hermes.Sessions do
   @moduledoc """
   Public API for managing conversation sessions.
@@ -71,7 +73,15 @@ defmodule Hermes.Sessions do
     |> Enum.flat_map(fn pid ->
       case SessionServer.get_state(pid) do
         %{session_id: id, model: model, provider: provider, status: status, messages: messages} ->
-          [%{id: id, model: model, provider: provider, status: status, message_count: length(messages)}]
+          [
+            %{
+              id: id,
+              model: model,
+              provider: provider,
+              status: status,
+              message_count: length(messages)
+            }
+          ]
 
         _ ->
           []
@@ -89,7 +99,14 @@ defmodule Hermes.Sessions do
     live = Map.new(list_sessions(), &{&1.id, Map.put(&1, :live, true)})
 
     persisted =
-      Hermes.Sessions.Store.list_sessions()
+      case Hermes.Sessions.Store.list_sessions() do
+        {:error, reason} ->
+          Logger.warning("Sessions.list_all failed to load persisted sessions: #{reason}")
+          []
+
+        sessions ->
+          sessions
+      end
       |> Map.new(fn s ->
         {s.id,
          %{

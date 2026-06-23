@@ -54,6 +54,9 @@ defmodule Hermes.MixProject do
       {:rustler, "~> 0.31", runtime: false},
       {:bandit, "~> 1.5"},
       {:lazy_html, ">= 0.1.0", only: :test},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       {:elixir_make, "~> 0.9.0", override: true}
     ]
   end

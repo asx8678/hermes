@@ -40,6 +40,8 @@ defmodule HermesWeb do
       use Phoenix.LiveView,
         layout: false
 
+      import HermesWeb.Components.Nav
+
       unquote(verified_routes())
     end
   end

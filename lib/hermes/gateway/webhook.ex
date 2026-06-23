@@ -5,6 +5,9 @@ defmodule Hermes.Gateway.Webhook do
   Parses inbound webhook payloads and forwards them to the running connector
   process identified by the URL path. The connector is responsible for
   authenticating and interpreting the platform-specific payload.
+
+  Per-connector authentication (shared secrets, signatures, etc.) is expected
+  to be handled inside each connector's `handle_inbound/2` callback.
   """
 
   import Plug.Conn
@@ -20,7 +23,7 @@ defmodule Hermes.Gateway.Webhook do
 
     case running_connector(connector_name) do
       nil ->
-        Logger.warning("Webhook received for unknown connector: #{connector_name}")
+        Logger.warning("Webhook received for unavailable connector: #{connector_name}")
 
         conn
         |> put_resp_content_type("application/json")
@@ -36,7 +39,9 @@ defmodule Hermes.Gateway.Webhook do
             |> send_resp(200, Jason.encode!(%{status: "ok"}))
 
           {:error, reason} ->
-            Logger.warning("Connector #{connector_name} failed to handle webhook: #{inspect(reason)}")
+            Logger.warning(
+              "Connector #{connector_name} failed to handle webhook: #{inspect(reason)}"
+            )
 
             conn
             |> put_resp_content_type("application/json")
@@ -46,14 +51,12 @@ defmodule Hermes.Gateway.Webhook do
   end
 
   defp running_connector(name) when is_binary(name) and name != "" do
-    atom =
-      try do
-        String.to_existing_atom(name)
-      rescue
-        ArgumentError -> String.to_atom(name)
-      end
-
-    Hermes.Gateway.Registry.whereis(atom)
+    Hermes.Gateway.Registry.list_connectors()
+    |> Enum.find(fn entry -> Atom.to_string(entry.name) == name end)
+    |> case do
+      nil -> nil
+      entry -> Hermes.Gateway.Registry.whereis(entry.name)
+    end
   end
 
   defp running_connector(_name), do: nil

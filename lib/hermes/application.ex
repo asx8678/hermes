@@ -18,6 +18,7 @@ defmodule Hermes.Application do
       {Registry, keys: :unique, name: Hermes.Sessions.Registry},
       {Hermes.Sessions.Supervisor, name: Hermes.Sessions.Supervisor},
       {Hermes.Tools.TerminalSidecar, name: Hermes.Tools.TerminalSidecar},
+      {Hermes.Tools.BrowserSidecar, name: Hermes.Tools.BrowserSidecar},
       {Hermes.Tools.CodeExecutionSidecar, name: Hermes.Tools.CodeExecutionSidecar},
       {Hermes.Gateway.Registry, name: Hermes.Gateway.Registry},
       {Hermes.Gateway.Supervisor, name: Hermes.Gateway.Supervisor},

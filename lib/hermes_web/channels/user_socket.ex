@@ -4,8 +4,10 @@ defmodule HermesWeb.UserSocket do
 
   Ports the transport-agnostic handler semantics of
   `tui_gateway/server.py:898` from JSON-RPC/stdio to Phoenix Channels over
-  a localhost WebSocket.  No authentication is enforced in Milestone A; the
-  boundary is expected to run locally.
+  a localhost WebSocket.
+
+  When HERMES_CHANNEL_TOKEN is configured, connections must present a matching
+  bearer token; otherwise the boundary is open (localhost development mode).
   """
 
   use Phoenix.Socket
@@ -27,7 +29,7 @@ defmodule HermesWeb.UserSocket do
           token when is_binary(token) ->
             token = String.replace_prefix(token, "Bearer ", "")
 
-            if String.equivalent?(token, expected_token) do
+            if Plug.Crypto.secure_compare(token, expected_token) do
               {:ok, socket}
             else
               {:error, :unauthorized}

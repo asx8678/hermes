@@ -1,0 +1,70 @@
+<h1>Skills</h1>
+
+<%= if @error do %>
+  <p style="color: red;"><%= @error %></p>
+<% end %>
+
+<form phx-submit="search">
+  <label>
+    Search
+    <input type="text" name="query" value={@query} placeholder="name or category" />
+  </label>
+  <label>
+    Category
+    <select name="category">
+      <option value="">All</option>
+      <%= for cat <- @categories do %>
+        <option value={cat} selected={cat == @category}><%= cat %></option>
+      <% end %>
+    </select>
+  </label>
+  <button type="submit">Filter</button>
+</form>
+
+<button phx-click="toggle_create">New Skill</button>
+
+<%= if @create_open do %>
+  <form phx-submit="create">
+    <label>
+      Name
+      <input type="text" name="name" required />
+    </label>
+    <label>
+      Category
+      <input type="text" name="category" />
+    </label>
+    <label>
+      Content
+      <textarea name="content" rows="10" required></textarea>
+    </label>
+    <button type="submit">Create</button>
+  </form>
+<% end %>
+
+<table>
+  <tr>
+    <th>Name</th>
+    <th>Category</th>
+    <th>Description</th>
+    <th></th>
+  </tr>
+  <%= for skill <- @skills do %>
+    <tr>
+      <td><%= skill.name %></td>
+      <td><%= skill.category %></td>
+      <td><%= skill.description %></td>
+      <td>
+        <button phx-click="view" phx-value-name={skill.name}>View</button>
+        <button phx-click="delete" phx-value-name={skill.name}>Delete</button>
+      </td>
+    </tr>
+  <% end %>
+</table>
+
+<%= if @viewing do %>
+  <div>
+    <h2><%= @viewing.name %></h2>
+    <button phx-click="close_view">Close</button>
+    <pre><%= @viewing.content %></pre>
+  </div>
+<% end %>

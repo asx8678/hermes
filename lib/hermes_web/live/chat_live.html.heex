@@ -1,0 +1,74 @@
+<.nav />
+
+<h1>Chat</h1>
+
+<div class="chat-layout">
+  <aside class="session-list">
+    <h2>Sessions</h2>
+
+    <button phx-click="new_session">New Session</button>
+
+    <%= if @error do %>
+      <div class="error"><%= @error %></div>
+    <% end %>
+
+    <ul>
+      <%= for session <- @sessions do %>
+        <li
+          class={if @selected_session && @selected_session.id == session.id, do: "selected", else: ""}
+        >
+          <button phx-click="select_session" phx-value-id={session.id}>
+            <%= session.id %>
+            (<%= session.message_count %> messages,
+            <%= session.provider %>/<%= session.model %>,
+            <%= session.status %>)
+          </button>
+        </li>
+      <% end %>
+    </ul>
+  </aside>
+
+  <section class="chat-pane">
+    <%= if @selected_session do %>
+      <div class="session-meta">
+        <strong>Session:</strong> <%= @selected_session.id %>
+        <span>Provider: <%= @selected_session.provider %></span>
+        <span>Model: <%= @selected_session.model %></span>
+        <span>Status: <%= @selected_session.status %></span>
+        <span>Messages: <%= @selected_session.message_count %></span>
+      </div>
+
+      <div class="chat-history" id="chat-history">
+        <%= for message <- @messages do %>
+          <div class={"message message-#{message.role}"}>
+            <div class="message-role"><%= message.role %></div>
+            <pre class="message-content"><%= message.content %></pre>
+          </div>
+        <% end %>
+
+        <%= if @streaming != nil do %>
+          <div class="message message-assistant streaming">
+            <div class="message-role">assistant</div>
+            <pre class="message-content"><%= @streaming %></pre>
+          </div>
+        <% end %>
+      </div>
+
+      <form phx-submit="send_prompt" phx-change="prompt_change">
+        <label>
+          Prompt
+          <input
+            type="text"
+            name="prompt[text]"
+            value={@prompt}
+            placeholder="Type a message..."
+            disabled={@selected_session.status == :running}
+          />
+        </label>
+        <button type="submit" disabled={@selected_session.status == :running}>Send</button>
+      </form>
+    <% else %>
+      <p>No session selected. Create a new session to start chatting.</p>
+    <% end %>
+  </section>
+</div>

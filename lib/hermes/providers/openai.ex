@@ -42,12 +42,102 @@ defmodule Hermes.Providers.OpenAI do
 
   @impl true
   @spec convert_messages([map()], keyword()) :: [map()]
-  def convert_messages(messages, _opts \\ []) when is_list(messages) do
-    # Stored messages are already OpenAI-shaped. Pass through untouched — do not
-    # inspect internals, as messages may be atom- or string-keyed (Jason encodes
-    # both to JSON string keys).
-    messages
+  def convert_messages(messages, opts \\ []) when is_list(messages) do
+    model = Keyword.get(opts, :model)
+    strip_extra_content = not model_consumes_thought_signature?(model)
+
+    needs_sanitize =
+      Enum.any?(messages, fn
+        msg when not is_map(msg) -> false
+        msg ->
+          cond do
+            # Strip Codex Responses API fields, tool_name, timestamp
+            Map.has_key?(msg, "codex_reasoning_items") or
+              Map.has_key?(msg, "codex_message_items") or
+              Map.has_key?(msg, "tool_name") or
+              Map.has_key?(msg, "timestamp") ->
+              true
+
+            # Strip Hermes-internal scaffolding markers (_-prefixed keys)
+            Enum.any?(Map.keys(msg), fn k ->
+              is_binary(k) and String.starts_with?(k, "_")
+            end) ->
+              true
+
+            # Strip extra_content on tool_calls for non-Gemini models
+            case msg["tool_calls"] do
+              tcs when is_list(tcs) ->
+                Enum.any?(tcs, fn tc ->
+                  is_map(tc) and (
+                    Map.has_key?(tc, "call_id") or
+                    Map.has_key?(tc, "response_item_id") or
+                    (strip_extra_content and Map.has_key?(tc, "extra_content"))
+                  )
+                end)
+
+              _ ->
+                false
+            end
+
+            true ->
+              false
+          end
+      end)
+
+    if needs_sanitize do
+      Enum.map(messages, &sanitize_message(&1, strip_extra_content))
+    else
+      messages
+    end
   end
+
+  defp sanitize_message(msg, strip_extra_content) when is_map(msg) do
+    msg
+    |> Map.drop(~w(codex_reasoning_items codex_message_items tool_name timestamp))
+    |> drop_internal_markers()
+    |> sanitize_tool_calls(strip_extra_content)
+  end
+
+  defp sanitize_message(msg, _), do: msg
+
+  defp drop_internal_markers(msg) do
+    Enum.reduce(Map.keys(msg), msg, fn
+      k, acc when is_binary(k) and binary_part(k, 0, 1) == "_" ->
+        Map.delete(acc, k)
+      _, acc -> acc
+    end)
+  end
+
+  defp sanitize_tool_calls(%{"tool_calls" => tcs} = msg, strip_extra_content)
+       when is_list(tcs) do
+    cleaned =
+      Enum.map(tcs, fn
+        tc when is_map(tc) ->
+          tc =
+            if strip_extra_content,
+              do: Map.delete(tc, "extra_content"),
+              else: tc
+
+          tc
+          |> Map.delete("call_id")
+          |> Map.delete("response_item_id")
+
+        tc ->
+          tc
+      end)
+
+    Map.put(msg, "tool_calls", cleaned)
+  end
+
+  defp sanitize_tool_calls(msg, _), do: msg
+
+  # Gemini 3 thinking models consume thought_signature via extra_content on tool_calls.
+  defp model_consumes_thought_signature?(model) when is_binary(model) do
+    m = String.downcase(model)
+    String.contains?(m, "gemini") or String.contains?(m, "gemini-3")
+  end
+
+  defp model_consumes_thought_signature?(_), do: false
 
   @impl true
   @spec convert_tools([map()] | nil) :: [map()]
@@ -64,7 +154,7 @@ defmodule Hermes.Providers.OpenAI do
   @impl true
   @spec build_kwargs(String.t(), [map()], [map()] | nil, keyword()) :: map()
   def build_kwargs(model, messages, tools, params \\ []) do
-    openai_messages = convert_messages(messages)
+    openai_messages = convert_messages(messages, model: model)
     openai_tools = if tools, do: convert_tools(tools), else: []
 
     # makora's GLM/Kimi (and modern OpenAI models) expect `max_completion_tokens`
@@ -90,6 +180,7 @@ defmodule Hermes.Providers.OpenAI do
 
     choice = response |> Map.get("choices", []) |> List.first()
     message = (choice && choice["message"]) || %{}
+    finish_reason = map_finish_reason(choice && choice["finish_reason"])
 
     content =
       case message["content"] do
@@ -103,15 +194,57 @@ defmodule Hermes.Providers.OpenAI do
         _ -> nil
       end
 
+    # Capture reasoning_content and reasoning_details in provider_data for
+    # downstream replay (thinking prefill, cross-turn coherence).
+    # Ports Python chat_completions.py:652-668.
+    provider_data =
+      []
+      |> maybe_put_provider(:reasoning_content, message["reasoning_content"])
+      |> maybe_put_provider(:reasoning_details, message["reasoning_details"])
+
+    # OpenAI structured-refusal: when a model declines, the API populates
+    # message.refusal and leaves content empty. Without capturing it the
+    # refusal looks like an empty response, triggering 3 retries of a
+    # deterministic refusal. Promote to content + content_filter finish.
+    # Ports Python chat_completions.py:670-702.
+    {content, finish_reason, provider_data} =
+      handle_refusal(message, content, finish_reason, provider_data)
+
     %NormalizedResponse{
       content: content,
       tool_calls: normalize_tool_calls(message["tool_calls"], strip_tool_prefix?),
-      finish_reason: map_finish_reason(choice && choice["finish_reason"]),
+      finish_reason: finish_reason,
       reasoning: reasoning,
       usage: extract_usage(response["usage"]),
-      provider_data: nil
+      provider_data: if(provider_data == [], do: nil, else: Map.new(provider_data))
     }
   end
+
+  defp handle_refusal(message, content, finish_reason, provider_data) do
+    refusal = message["refusal"]
+
+    if is_binary(refusal) and String.trim(refusal) != "" do
+      provider_data = [{:refusal, refusal} | provider_data]
+      has_text = is_binary(content) and String.trim(content) != ""
+      has_tool_calls = is_list(message["tool_calls"]) and message["tool_calls"] != []
+
+      if not has_text and not has_tool_calls do
+        {refusal, promote_refusal_finish(finish_reason), provider_data}
+      else
+        {content, finish_reason, provider_data}
+      end
+    else
+      {content, finish_reason, provider_data}
+    end
+  end
+
+  defp promote_refusal_finish("stop"), do: "content_filter"
+  defp promote_refusal_finish(nil), do: "content_filter"
+  defp promote_refusal_finish(other), do: other
+
+  defp maybe_put_provider(acc, _key, nil), do: acc
+  defp maybe_put_provider(acc, _key, ""), do: acc
+  defp maybe_put_provider(acc, key, value), do: [{key, value} | acc]
 
   defp normalize_tool_calls(tool_calls, _strip?) when tool_calls in [nil, []], do: nil
 
@@ -119,10 +252,20 @@ defmodule Hermes.Providers.OpenAI do
     Enum.map(tool_calls, fn tc ->
       fn_map = tc["function"] || %{}
 
+      # Preserve provider-specific extras (Gemini thought_signature via
+      # extra_content) for cross-turn replay. Ports Python
+      # chat_completions.py:619-641.
+      provider_data =
+        case tc["extra_content"] do
+          nil -> nil
+          ec -> %{"extra_content" => ec}
+        end
+
       ToolCall.new(
         id: tc["id"],
         name: maybe_strip_mcp_prefix(fn_map["name"] || "", strip?),
-        arguments: fn_map["arguments"] || "{}"
+        arguments: fn_map["arguments"] || "{}",
+        provider_data: provider_data
       )
     end)
   end

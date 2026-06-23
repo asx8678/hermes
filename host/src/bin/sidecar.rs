@@ -20,6 +20,8 @@ enum Command {
     CodeExecution,
     /// Terminal command sidecar loop.
     Terminal,
+    /// Browser automation sidecar loop (CDP/Chrome).
+    Browser,
 }
 
 #[tokio::main]
@@ -29,5 +31,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::CodeExecution => hermes_host::sidecar::code_execution::run().await,
         Command::Terminal => hermes_host::sidecar::terminal::run().await,
+        Command::Browser => hermes_host::sidecar::browser::run().await,
     }
 }

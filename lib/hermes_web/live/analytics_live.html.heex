@@ -1,0 +1,83 @@
+<h1>Analytics</h1>
+
+<form phx-submit="set_limit" phx-change="set_limit">
+  <label>
+    Session limit
+    <input type="number" name="limit" value={@limit} min="1" max="10000" />
+  </label>
+  <button type="submit">Load</button>
+  <button type="button" phx-click="refresh">Refresh</button>
+</form>
+
+<%= if @missing_fields != [] do %>
+  <p style="color: orange;">
+    Missing fields: <%= Enum.join(Enum.map(@missing_fields, &to_string/1), ", ") %> — totals shown as zero for these metrics.
+  </p>
+<% end %>
+
+<h2>Totals</h2>
+
+<table>
+  <tr>
+    <th>Metric</th>
+    <th>Value</th>
+  </tr>
+  <tr>
+    <td>Total Sessions</td>
+    <td><%= @totals.total_sessions %></td>
+  </tr>
+  <tr>
+    <td>Total Messages</td>
+    <td><%= @totals.total_messages %></td>
+  </tr>
+  <tr>
+    <td>Total Tokens</td>
+    <td><%= @totals.total_tokens %></td>
+  </tr>
+  <tr>
+    <td>Total Cost (USD)</td>
+    <td><%= :erlang.float_to_binary(@totals.total_cost, decimals: 4) %></td>
+  </tr>
+</table>
+
+<h2>By Provider</h2>
+
+<table>
+  <tr>
+    <th>Provider</th>
+    <th>Sessions</th>
+    <th>Messages</th>
+    <th>Tokens</th>
+    <th>Cost (USD)</th>
+  </tr>
+  <%= for row <- @by_provider do %>
+    <tr>
+      <td><%= row.name %></td>
+      <td><%= row.sessions %></td>
+      <td><%= row.messages %> (<%= row.message_pct %>%)</td>
+      <td><%= row.tokens %> (<%= row.token_pct %>%)</td>
+      <td><%= :erlang.float_to_binary(row.cost, decimals: 4) %> (<%= row.cost_pct %>%)</td>
+    </tr>
+  <% end %>
+</table>
+
+<h2>By Model</h2>
+
+<table>
+  <tr>
+    <th>Model</th>
+    <th>Sessions</th>
+    <th>Messages</th>
+    <th>Tokens</th>
+    <th>Cost (USD)</th>
+  </tr>
+  <%= for row <- @by_model do %>
+    <tr>
+      <td><%= row.name %></td>
+      <td><%= row.sessions %></td>
+      <td><%= row.messages %> (<%= row.message_pct %>%)</td>
+      <td><%= row.tokens %> (<%= row.token_pct %>%)</td>
+      <td><%= :erlang.float_to_binary(row.cost, decimals: 4) %> (<%= row.cost_pct %>%)</td>
+    </tr>
+  <% end %>
+</table>

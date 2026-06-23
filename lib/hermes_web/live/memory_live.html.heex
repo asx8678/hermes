@@ -1,0 +1,61 @@
+<h1>Memory</h1>
+
+<div class="memory-targets">
+  <span>Target:</span>
+  <%= for target <- ["notes", "profile"] do %>
+    <button
+      phx-click="switch_target"
+      phx-value-target={target}
+      disabled={@target == target}
+    >
+      <%= target %>
+    </button>
+  <% end %>
+</div>
+
+<form phx-submit="search" phx-change="search">
+  <label>
+    Search
+    <input type="text" name="query[text]" value={@query} placeholder="Search memory..." />
+  </label>
+  <button type="submit">Search</button>
+</form>
+
+<%= if @error do %>
+  <div class="error"><%= @error %></div>
+<% end %>
+
+<h2>Add <%= @target %></h2>
+
+<form phx-submit="add">
+  <label>
+    Content
+    <input type="text" name="entry[content]" placeholder="New entry..." />
+  </label>
+  <button type="submit">Add</button>
+</form>
+
+<h2>Entries (<%= length(@entries) %>)</h2>
+
+<table>
+  <tr>
+    <th>Key</th>
+    <th>Value</th>
+    <th></th>
+  </tr>
+  <%= for entry <- @entries do %>
+    <tr>
+      <td><%= entry.key %></td>
+      <td><%= entry.value %></td>
+      <td>
+        <button phx-click="delete" phx-value-old_text={entry.value} data-confirm="Delete this entry?">
+          Delete
+        </button>
+      </td>
+    </tr>
+  <% end %>
+</table>
+
+<div>
+  <a href={~p"/dashboard"}>Back to dashboard</a>
+</div>

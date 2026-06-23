@@ -1,0 +1,59 @@
+<h1>Cron Routines</h1>
+
+<%= if @error do %>
+  <p style="color: red;"><%= @error %></p>
+<% end %>
+
+<%= if @success do %>
+  <p style="color: green;"><%= @success %></p>
+<% end %>
+
+<h2>Schedule New Routine</h2>
+
+<form phx-submit="schedule" phx-change="form_change">
+  <label>
+    Name
+    <input type="text" name="name" value={@form["name"]} required />
+  </label>
+  <label>
+    Cron Expression
+    <input type="text" name="cron" value={@form["cron"]} placeholder="*/5 * * * *" required />
+  </label>
+  <label>
+    Prompt
+    <textarea name="prompt" rows="3" required><%= @form["prompt"] %></textarea>
+  </label>
+  <label>
+    Session ID (optional)
+    <input type="text" name="session_id" value={@form["session_id"]} />
+  </label>
+  <button type="submit">Schedule</button>
+  <button type="button" phx-click="clear_messages">Clear messages</button>
+</form>
+
+<h2>Existing Routines</h2>
+
+<table>
+  <tr>
+    <th>ID</th>
+    <th>Name</th>
+    <th>Cron</th>
+    <th>Prompt</th>
+    <th>Session ID</th>
+    <th>Next Run</th>
+    <th></th>
+  </tr>
+  <%= for routine <- @routines do %>
+    <tr>
+      <td><%= routine["id"] || routine[:id] %></td>
+      <td><%= routine["name"] || routine[:name] %></td>
+      <td><%= routine["cron"] || routine[:cron] %></td>
+      <td><%= routine["prompt"] || routine[:prompt] %></td>
+      <td><%= routine["session_id"] || routine[:session_id] || "—" %></td>
+      <td><%= routine["next_run_at"] || routine[:next_run_at] || "—" %></td>
+      <td>
+        <button phx-click="delete" phx-value-id={routine["id"] || routine[:id]}>Delete</button>
+      </td>
+    </tr>
+  <% end %>
+</table>
