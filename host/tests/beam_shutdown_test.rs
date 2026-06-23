@@ -62,7 +62,7 @@ async fn graceful_shutdown_stops_beam_within_timeout() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
 
     let pid = beam.pid().unwrap();
@@ -94,7 +94,7 @@ async fn sigterm_fallback_when_stop_fails() {
     wrap_hermes_script(&cache_dir, &wrapper);
 
     let port = random_port();
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
 
     let pid = beam.pid().unwrap();
@@ -129,7 +129,7 @@ sleep 1000
     wrap_hermes_script(&cache_dir, wrapper);
 
     let port = random_port();
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
 
     // Give the shell wrapper time to install the SIGTERM trap.
     sleep(Duration::from_millis(200)).await;
@@ -162,7 +162,7 @@ async fn no_orphan_processes_after_shutdown() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
 
     let pid = beam.pid().unwrap();
@@ -181,7 +181,7 @@ async fn health_check_true_when_up_false_when_down() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut supervisor = BeamSupervisor::start(&cache_dir, port).await.unwrap();
+    let mut supervisor = BeamSupervisor::start(&cache_dir, port, false).await.unwrap();
     assert!(
         supervisor.health_check().await,
         "health check should be true"

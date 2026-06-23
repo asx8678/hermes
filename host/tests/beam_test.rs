@@ -40,7 +40,7 @@ async fn spawn_starts_a_beam_process() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
     beam.shutdown().await.unwrap();
 }
@@ -51,7 +51,7 @@ async fn wait_for_port_succeeds_when_server_is_up() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
     beam.shutdown().await.unwrap();
 }
@@ -62,7 +62,7 @@ async fn shutdown_stops_the_beam_process() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
     beam.shutdown().await.unwrap();
 
@@ -81,7 +81,7 @@ async fn integration_extract_spawn_wait_connect_join_send_receive() {
     let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
     let port = random_port();
 
-    let mut beam = BeamProcess::spawn(&cache_dir, port).await.unwrap();
+    let mut beam = BeamProcess::spawn(&cache_dir, port, false).await.unwrap();
     beam.wait_for_port().await.unwrap();
 
     let mut client = ChannelsClient::connect(port).await.unwrap();

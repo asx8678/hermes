@@ -13,8 +13,11 @@ pub struct BeamSupervisor {
 
 impl BeamSupervisor {
     /// Start the BEAM release from `cache_dir` on the given `port`.
-    pub async fn start(cache_dir: &Path, port: u16) -> Result<BeamSupervisor> {
-        let mut beam = BeamProcess::spawn(cache_dir, port).await?;
+    ///
+    /// `capture_logs` is forwarded to [`BeamProcess::spawn`]: set it for TUI
+    /// launches so BEAM logs go to a file instead of the terminal.
+    pub async fn start(cache_dir: &Path, port: u16, capture_logs: bool) -> Result<BeamSupervisor> {
+        let mut beam = BeamProcess::spawn(cache_dir, port, capture_logs).await?;
         beam.wait_for_port().await?;
 
         Ok(BeamSupervisor {
@@ -82,7 +85,7 @@ mod tests {
         let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
         let port = random_port();
 
-        let supervisor = BeamSupervisor::start(&cache_dir, port).await.unwrap();
+        let supervisor = BeamSupervisor::start(&cache_dir, port, false).await.unwrap();
         assert!(supervisor.health_check().await);
 
         // Supervisor does not implement Drop-based shutdown, so call it
@@ -98,7 +101,7 @@ mod tests {
         let cache_dir = BeamProcess::extract_to(&root).await.unwrap();
         let port = random_port();
 
-        let mut supervisor = BeamSupervisor::start(&cache_dir, port).await.unwrap();
+        let mut supervisor = BeamSupervisor::start(&cache_dir, port, false).await.unwrap();
         supervisor.shutdown().await.unwrap();
 
         assert!(!supervisor.health_check().await);

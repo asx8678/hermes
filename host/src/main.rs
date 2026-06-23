@@ -65,7 +65,8 @@ async fn run_chat(model: String, provider: String) -> Result<()> {
     print_runtime_notes(&report);
 
     let port = random_port();
-    let beam = start_beam(report, port).await?;
+    // TUI mode: capture BEAM logs to a file so they don't corrupt the frame.
+    let beam = start_beam(report, port, true).await?;
 
     run_supervised(beam, async move {
         let client = ChannelsClient::connect(port).await?;
@@ -84,7 +85,8 @@ async fn run_gateway(port: u16, model: String, provider: String) -> Result<()> {
     println!("model: {}", model);
     println!("provider: {}", provider);
 
-    let beam = start_beam(report, port).await?;
+    // Headless gateway: let the BEAM inherit the terminal so logs are visible.
+    let beam = start_beam(report, port, false).await?;
 
     // Signal handling is performed by `run_supervised`; this future simply waits
     // until something else (a signal or an error) terminates the process.
@@ -93,9 +95,9 @@ async fn run_gateway(port: u16, model: String, provider: String) -> Result<()> {
 
 /// Resolve the runtime report into a running BEAM. Prefers a system/mise-managed
 /// launch from source; on any failure, falls back to the embedded release.
-async fn start_beam(report: RuntimeReport, port: u16) -> Result<RunningBeam> {
+async fn start_beam(report: RuntimeReport, port: u16, capture_logs: bool) -> Result<RunningBeam> {
     if let Some(launch) = report.launch {
-        match start_system(&launch, port).await {
+        match start_system(&launch, port, capture_logs).await {
             Ok(beam) => return Ok(RunningBeam::System(beam)),
             Err(e) => {
                 eprintln!("hermes: system runtime launch failed ({e:#}); using bundled release");
@@ -104,12 +106,12 @@ async fn start_beam(report: RuntimeReport, port: u16) -> Result<RunningBeam> {
     }
 
     let cache_dir = BeamProcess::extract().await?;
-    let supervisor = BeamSupervisor::start(&cache_dir, port).await?;
+    let supervisor = BeamSupervisor::start(&cache_dir, port, capture_logs).await?;
     Ok(RunningBeam::Embedded(supervisor))
 }
 
-async fn start_system(launch: &SystemLaunch, port: u16) -> Result<SystemBeam> {
-    let beam = SystemBeam::spawn(launch, port).await?;
+async fn start_system(launch: &SystemLaunch, port: u16, capture_logs: bool) -> Result<SystemBeam> {
+    let beam = SystemBeam::spawn(launch, port, capture_logs).await?;
     beam.wait_for_port().await?;
     Ok(beam)
 }

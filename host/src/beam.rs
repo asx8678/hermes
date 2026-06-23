@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use rand::RngCore;
 use std::env;
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
@@ -93,7 +95,12 @@ impl BeamProcess {
     ///
     /// A temporary database directory is created for this process so concurrent
     /// spawns do not share state. The child is started with `kill_on_drop`.
-    pub async fn spawn(cache_dir: &Path, port: u16) -> Result<BeamProcess> {
+    ///
+    /// When `capture_logs` is set (TUI mode), the child's stdout/stderr are
+    /// redirected to `~/.hermes/log/beam.log` so the BEAM's Logger output does
+    /// not corrupt the ratatui frame. Headless callers (gateway) pass `false`
+    /// and let the BEAM inherit the terminal.
+    pub async fn spawn(cache_dir: &Path, port: u16, capture_logs: bool) -> Result<BeamProcess> {
         let release_root = cache_dir.join("hermes");
         let bin = release_root.join("bin/hermes");
 
@@ -130,6 +137,11 @@ impl BeamProcess {
             .filter(|p| p.exists())
         {
             cmd.env("HERMES_SIDECAR_PATH", sidecar);
+        }
+
+        if capture_logs {
+            let (out, err) = capture_beam_logs()?;
+            cmd.stdin(Stdio::null()).stdout(out).stderr(err);
         }
 
         let child = cmd
@@ -359,6 +371,30 @@ pub(crate) fn kill_tree(_pid: u32, _signal: &str) -> Result<()> {
 #[cfg(not(unix))]
 pub(crate) fn tree_alive(_pid: u32) -> bool {
     false
+}
+
+/// Build stdout/stderr handles pointing at `~/.hermes/log/beam.log`, truncating
+/// it on each launch. Used in TUI mode so the BEAM's Logger output is captured
+/// to a file instead of painting over the ratatui frame. The path is announced
+/// on stderr before the TUI takes over the screen.
+pub fn capture_beam_logs() -> Result<(Stdio, Stdio)> {
+    let dir = dirs::home_dir()
+        .map(|h| h.join(".hermes/log"))
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .expect("current directory")
+                .join(".hermes/log")
+        });
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating beam log dir {}", dir.display()))?;
+
+    let path = dir.join("beam.log");
+    let file =
+        File::create(&path).with_context(|| format!("creating beam log {}", path.display()))?;
+    let err = file.try_clone().context("cloning beam log handle")?;
+    eprintln!("hermes: BEAM logs → {}", path.display());
+
+    Ok((Stdio::from(file), Stdio::from(err)))
 }
 
 fn default_cache_root() -> PathBuf {

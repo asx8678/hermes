@@ -149,13 +149,22 @@ pub struct SystemBeam {
 
 impl SystemBeam {
     /// Spawn `mix phx.server` from the source tree on `port`.
-    pub async fn spawn(launch: &SystemLaunch, port: u16) -> Result<SystemBeam> {
+    ///
+    /// When `capture_logs` is set (TUI mode), the child's stdout/stderr are
+    /// redirected to `~/.hermes/log/beam.log` so the BEAM's Logger output does
+    /// not corrupt the ratatui frame. Headless callers (gateway) pass `false`.
+    pub async fn spawn(launch: &SystemLaunch, port: u16, capture_logs: bool) -> Result<SystemBeam> {
         let mut cmd = mix_command(launch.mise.as_ref());
         cmd.arg("phx.server")
             .current_dir(&launch.app_src)
             .env("PHX_SERVER", "true")
             .env("PORT", port.to_string())
             .kill_on_drop(true);
+
+        if capture_logs {
+            let (out, err) = crate::beam::capture_beam_logs()?;
+            cmd.stdin(Stdio::null()).stdout(out).stderr(err);
+        }
 
         // Expose the sidecar binary path the same way the embedded launcher does.
         if let Some(sidecar) = std::env::current_exe()
